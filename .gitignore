@@ -2,6 +2,10 @@
 build/
 bin/
 dist/
+agent-orchestrator
+
+# Runtime data
+.tickets/
 
 # Go specific
 *.exe

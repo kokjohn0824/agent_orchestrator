@@ -5,7 +5,10 @@ import (
 	"fmt"
 	"os"
 
+	"github.com/anthropic/agent-orchestrator/internal/agent"
 	"github.com/anthropic/agent-orchestrator/internal/config"
+	orcherrors "github.com/anthropic/agent-orchestrator/internal/errors"
+	"github.com/anthropic/agent-orchestrator/internal/i18n"
 	"github.com/spf13/cobra"
 )
 
@@ -30,16 +33,8 @@ var (
 // rootCmd represents the base command
 var rootCmd = &cobra.Command{
 	Use:   "agent-orchestrator",
-	Short: "協調多個 Cursor Agent 的 CLI 工具",
-	Long: `Agent Orchestrator - 使用 Cursor Agent (Headless Mode) 作為 Subagents
-
-這個工具可以幫助你：
-  • 透過互動式問答初始化專案規劃 (init)
-  • 分析現有專案並產生改進建議 (analyze)
-  • 將 milestone 分解為可執行的 tickets (plan)
-  • 自動執行 coding、review、test、commit 等任務
-
-參考文件: https://cursor.com/docs/cli/headless`,
+	Short: i18n.CmdRootShort,
+	Long:  i18n.CmdRootLong,
 	PersistentPreRunE: func(cmd *cobra.Command, args []string) error {
 		// Skip config loading for some commands
 		if cmd.Name() == "version" || cmd.Name() == "help" || cmd.Name() == "completion" {
@@ -49,7 +44,7 @@ var rootCmd = &cobra.Command{
 		var err error
 		cfg, err = config.Load()
 		if err != nil {
-			return fmt.Errorf("載入設定失敗: %w", err)
+			return fmt.Errorf(i18n.ErrLoadConfigFailed, err)
 		}
 
 		// Override with flags
@@ -84,12 +79,12 @@ func Execute() {
 
 func init() {
 	// Persistent flags (available to all commands)
-	rootCmd.PersistentFlags().StringVar(&cfgFile, "config", "", "設定檔路徑 (預設: .agent-orchestrator.yaml)")
-	rootCmd.PersistentFlags().BoolVar(&dryRun, "dry-run", false, "不實際執行 agent，只顯示會做什麼")
-	rootCmd.PersistentFlags().BoolVarP(&verbose, "verbose", "v", false, "詳細輸出")
-	rootCmd.PersistentFlags().BoolVar(&debug, "debug", false, "除錯模式")
-	rootCmd.PersistentFlags().BoolVarP(&quiet, "quiet", "q", false, "安靜模式，只顯示錯誤")
-	rootCmd.PersistentFlags().StringVarP(&outputFormat, "output", "o", "", "Agent 輸出格式: text, json, stream-json")
+	rootCmd.PersistentFlags().StringVar(&cfgFile, "config", "", i18n.FlagConfig)
+	rootCmd.PersistentFlags().BoolVar(&dryRun, "dry-run", false, i18n.FlagDryRun)
+	rootCmd.PersistentFlags().BoolVarP(&verbose, "verbose", "v", false, i18n.FlagVerbose)
+	rootCmd.PersistentFlags().BoolVar(&debug, "debug", false, i18n.FlagDebug)
+	rootCmd.PersistentFlags().BoolVarP(&quiet, "quiet", "q", false, i18n.FlagQuiet)
+	rootCmd.PersistentFlags().StringVarP(&outputFormat, "output", "o", "", i18n.FlagOutput)
 
 	// Add subcommands
 	rootCmd.AddCommand(versionCmd)
@@ -110,7 +105,7 @@ func init() {
 // versionCmd shows version information
 var versionCmd = &cobra.Command{
 	Use:   "version",
-	Short: "顯示版本資訊",
+	Short: i18n.CmdVersionShort,
 	Run: func(cmd *cobra.Command, args []string) {
 		fmt.Printf("Agent Orchestrator %s\n", Version)
 		fmt.Printf("  Commit: %s\n", Commit)
@@ -121,4 +116,25 @@ var versionCmd = &cobra.Command{
 // GetConfig returns the global configuration
 func GetConfig() *config.Config {
 	return cfg
+}
+
+// CreateAgentCaller creates and configures an agent caller with the current config.
+// It sets up DryRun and Verbose modes, and checks if the agent is available.
+// Returns an error if the agent is not available (unless in DryRun mode).
+func CreateAgentCaller() (*agent.Caller, error) {
+	caller := agent.NewCaller(
+		cfg.AgentCommand,
+		cfg.AgentForce,
+		cfg.AgentOutputFormat,
+		cfg.LogsDir,
+	)
+	caller.SetDryRun(cfg.DryRun)
+	caller.SetVerbose(cfg.Verbose)
+	caller.DisableDetailedLog = cfg.DisableDetailedLog
+
+	if !caller.IsAvailable() && !cfg.DryRun {
+		return nil, orcherrors.ErrAgentNotAvailable()
+	}
+
+	return caller, nil
 }

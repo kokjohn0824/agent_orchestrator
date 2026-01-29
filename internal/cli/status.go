@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 
+	"github.com/anthropic/agent-orchestrator/internal/i18n"
 	"github.com/anthropic/agent-orchestrator/internal/ticket"
 	"github.com/anthropic/agent-orchestrator/internal/ui"
 	"github.com/spf13/cobra"
@@ -11,12 +12,9 @@ import (
 
 var statusCmd = &cobra.Command{
 	Use:   "status",
-	Short: "顯示 tickets 狀態",
-	Long: `顯示所有 tickets 的狀態統計和列表。
-
-範例:
-  agent-orchestrator status`,
-	RunE: runStatus,
+	Short: i18n.CmdStatusShort,
+	Long:  i18n.CmdStatusLong,
+	RunE:  runStatus,
 }
 
 func runStatus(cmd *cobra.Command, args []string) error {
@@ -36,16 +34,16 @@ func runStatus(cmd *cobra.Command, args []string) error {
 	}
 
 	if total == 0 {
-		ui.PrintInfo(w, "沒有任何 tickets")
+		ui.PrintInfo(w, i18n.MsgNoTickets)
 		ui.PrintInfo(w, "")
-		ui.PrintInfo(w, "使用以下指令開始:")
-		ui.PrintInfo(w, "  agent-orchestrator init \"專案目標\"   # 互動式初始化")
-		ui.PrintInfo(w, "  agent-orchestrator plan <milestone>  # 從 milestone 產生 tickets")
-		ui.PrintInfo(w, "  agent-orchestrator analyze           # 分析現有專案")
+		ui.PrintInfo(w, i18n.MsgGettingStarted)
+		ui.PrintInfo(w, i18n.MsgGettingStartedInit)
+		ui.PrintInfo(w, i18n.MsgGettingStartedPlan)
+		ui.PrintInfo(w, i18n.MsgGettingStartedAnalyze)
 		return nil
 	}
 
-	ui.PrintHeader(w, "Tickets 狀態")
+	ui.PrintHeader(w, i18n.UITicketStatus)
 
 	// Status summary table
 	statusTable := ui.NewStatusTable()
@@ -83,31 +81,31 @@ func runStatus(cmd *cobra.Command, args []string) error {
 
 		for _, t := range tickets {
 			priority := ui.PriorityStyle(t.Priority).Render(fmt.Sprintf("P%d", t.Priority))
-			ui.PrintInfo(w, fmt.Sprintf("  %s %s: %s", priority, t.ID, truncateTitle(t.Title, 50)))
-			
+			ui.PrintInfo(w, fmt.Sprintf("  %s %s: %s", priority, t.ID, ui.Truncate(t.Title, 50)))
+
 			// Show dependencies if any
 			if len(t.Dependencies) > 0 {
-				ui.PrintInfo(w, ui.StyleMuted.Render(fmt.Sprintf("      依賴: %v", t.Dependencies)))
+				ui.PrintInfo(w, ui.StyleMuted.Render(fmt.Sprintf(i18n.MsgDependencies, t.Dependencies)))
 			}
-			
+
 			// Show error if failed
 			if s.status == ticket.StatusFailed && t.Error != "" {
-				ui.PrintInfo(w, ui.StyleError.Render(fmt.Sprintf("      錯誤: %s", truncateTitle(t.Error, 60))))
+				ui.PrintInfo(w, ui.StyleError.Render(fmt.Sprintf(i18n.MsgErrorDetail, ui.Truncate(t.Error, 60))))
 			}
 		}
 	}
 
 	// Show helpful commands
 	ui.PrintInfo(w, "")
-	ui.PrintInfo(w, ui.StyleMuted.Render("常用指令:"))
+	ui.PrintInfo(w, ui.StyleMuted.Render(i18n.UICommonCommands))
 	if counts[ticket.StatusPending] > 0 {
-		ui.PrintInfo(w, ui.StyleMuted.Render("  agent-orchestrator work        # 處理 pending tickets"))
+		ui.PrintInfo(w, ui.StyleMuted.Render("  "+i18n.HintRunWorkCmd))
 	}
 	if counts[ticket.StatusFailed] > 0 {
-		ui.PrintInfo(w, ui.StyleMuted.Render("  agent-orchestrator retry       # 重試失敗的 tickets"))
+		ui.PrintInfo(w, ui.StyleMuted.Render("  "+i18n.HintRunRetryCmd))
 	}
 	if counts[ticket.StatusCompleted] > 0 {
-		ui.PrintInfo(w, ui.StyleMuted.Render("  agent-orchestrator commit --all  # 提交所有完成的 tickets"))
+		ui.PrintInfo(w, ui.StyleMuted.Render("  "+i18n.HintRunCommitCmd))
 	}
 
 	return nil

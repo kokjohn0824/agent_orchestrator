@@ -6,17 +6,21 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"sync"
 )
 
 // Store handles ticket persistence
 type Store struct {
-	baseDir string
+	baseDir   string
+	pathCache map[string]string // ticket ID -> file path cache
+	cacheMu   sync.RWMutex      // protects pathCache
 }
 
 // NewStore creates a new ticket store
 func NewStore(baseDir string) *Store {
 	return &Store{
-		baseDir: baseDir,
+		baseDir:   baseDir,
+		pathCache: make(map[string]string),
 	}
 }
 
@@ -30,7 +34,8 @@ func (s *Store) Init() error {
 	}
 
 	for _, dir := range dirs {
-		if err := os.MkdirAll(dir, 0755); err != nil {
+		// Use 0700 for ticket directories to protect sensitive data
+		if err := os.MkdirAll(dir, 0700); err != nil {
 			return fmt.Errorf("failed to create directory %s: %w", dir, err)
 		}
 	}
@@ -43,13 +48,31 @@ func (s *Store) Save(t *Ticket) error {
 		return err
 	}
 
-	// Remove from other status directories
-	for _, status := range []Status{StatusPending, StatusInProgress, StatusCompleted, StatusFailed} {
-		if status != t.Status {
-			oldPath := filepath.Join(s.baseDir, string(status), t.ID+".json")
-			if _, err := os.Stat(oldPath); err == nil {
-				if err := os.Remove(oldPath); err != nil {
-					return fmt.Errorf("failed to remove old ticket file: %w", err)
+	newPath := filepath.Join(s.baseDir, string(t.Status), t.ID+".json")
+
+	// Check if we have a cached path for this ticket
+	s.cacheMu.RLock()
+	cachedPath, hasCached := s.pathCache[t.ID]
+	s.cacheMu.RUnlock()
+
+	// Only remove old file if status changed (path is different)
+	if hasCached && cachedPath != newPath {
+		if _, err := os.Stat(cachedPath); err == nil {
+			if err := os.Remove(cachedPath); err != nil {
+				return fmt.Errorf("failed to remove old ticket file: %w", err)
+			}
+		}
+	} else if !hasCached {
+		// No cache entry - this might be a new ticket or cache was cleared
+		// Search other directories only if ticket might exist elsewhere
+		for _, status := range []Status{StatusPending, StatusInProgress, StatusCompleted, StatusFailed} {
+			if status != t.Status {
+				oldPath := filepath.Join(s.baseDir, string(status), t.ID+".json")
+				if _, err := os.Stat(oldPath); err == nil {
+					if err := os.Remove(oldPath); err != nil {
+						return fmt.Errorf("failed to remove old ticket file: %w", err)
+					}
+					break // Found and removed, no need to check other directories
 				}
 			}
 		}
@@ -57,7 +80,8 @@ func (s *Store) Save(t *Ticket) error {
 
 	// Save to new location
 	dir := filepath.Join(s.baseDir, string(t.Status))
-	if err := os.MkdirAll(dir, 0755); err != nil {
+	// Use 0700 for ticket directories to protect sensitive data
+	if err := os.MkdirAll(dir, 0700); err != nil {
 		return fmt.Errorf("failed to create status directory: %w", err)
 	}
 
@@ -66,16 +90,39 @@ func (s *Store) Save(t *Ticket) error {
 		return fmt.Errorf("failed to marshal ticket: %w", err)
 	}
 
-	path := filepath.Join(dir, t.ID+".json")
-	if err := os.WriteFile(path, data, 0644); err != nil {
+	if err := os.WriteFile(newPath, data, 0644); err != nil {
 		return fmt.Errorf("failed to write ticket file: %w", err)
 	}
+
+	// Update cache with new path
+	s.cacheMu.Lock()
+	s.pathCache[t.ID] = newPath
+	s.cacheMu.Unlock()
 
 	return nil
 }
 
 // Load loads a ticket by ID
 func (s *Store) Load(id string) (*Ticket, error) {
+	// First check cache for known path
+	s.cacheMu.RLock()
+	cachedPath, hasCached := s.pathCache[id]
+	s.cacheMu.RUnlock()
+
+	if hasCached {
+		if _, err := os.Stat(cachedPath); err == nil {
+			data, err := os.ReadFile(cachedPath)
+			if err != nil {
+				return nil, fmt.Errorf("failed to read ticket file: %w", err)
+			}
+			return FromJSON(data)
+		}
+		// Cache entry is stale, remove it and search
+		s.cacheMu.Lock()
+		delete(s.pathCache, id)
+		s.cacheMu.Unlock()
+	}
+
 	// Search in all status directories
 	for _, status := range []Status{StatusPending, StatusInProgress, StatusCompleted, StatusFailed} {
 		path := filepath.Join(s.baseDir, string(status), id+".json")
@@ -84,7 +131,15 @@ func (s *Store) Load(id string) (*Ticket, error) {
 			if err != nil {
 				return nil, fmt.Errorf("failed to read ticket file: %w", err)
 			}
-			return FromJSON(data)
+			ticket, err := FromJSON(data)
+			if err != nil {
+				return nil, err
+			}
+			// Update cache
+			s.cacheMu.Lock()
+			s.pathCache[id] = path
+			s.cacheMu.Unlock()
+			return ticket, nil
 		}
 	}
 	return nil, fmt.Errorf("ticket not found: %s", id)
@@ -148,6 +203,27 @@ func (s *Store) LoadAll() (*TicketList, error) {
 
 // Delete removes a ticket from the store
 func (s *Store) Delete(id string) error {
+	// First check cache for known path
+	s.cacheMu.RLock()
+	cachedPath, hasCached := s.pathCache[id]
+	s.cacheMu.RUnlock()
+
+	if hasCached {
+		if _, err := os.Stat(cachedPath); err == nil {
+			if err := os.Remove(cachedPath); err != nil {
+				return err
+			}
+			s.cacheMu.Lock()
+			delete(s.pathCache, id)
+			s.cacheMu.Unlock()
+			return nil
+		}
+		// Cache entry is stale, remove it and search
+		s.cacheMu.Lock()
+		delete(s.pathCache, id)
+		s.cacheMu.Unlock()
+	}
+
 	for _, status := range []Status{StatusPending, StatusInProgress, StatusCompleted, StatusFailed} {
 		path := filepath.Join(s.baseDir, string(status), id+".json")
 		if _, err := os.Stat(path); err == nil {
@@ -212,7 +288,8 @@ func (s *Store) Clean() error {
 // SaveGeneratedTickets saves tickets from planning output
 func (s *Store) SaveGeneratedTickets(path string, tickets []*Ticket) error {
 	dir := filepath.Dir(path)
-	if err := os.MkdirAll(dir, 0755); err != nil {
+	// Use 0700 for ticket directories to protect sensitive data
+	if err := os.MkdirAll(dir, 0700); err != nil {
 		return fmt.Errorf("failed to create directory: %w", err)
 	}
 

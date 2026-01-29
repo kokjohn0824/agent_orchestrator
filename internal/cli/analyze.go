@@ -2,92 +2,80 @@ package cli
 
 import (
 	"context"
+	"fmt"
 	"os"
 	"strings"
 
 	"github.com/anthropic/agent-orchestrator/internal/agent"
+	orcherrors "github.com/anthropic/agent-orchestrator/internal/errors"
+	"github.com/anthropic/agent-orchestrator/internal/i18n"
 	"github.com/anthropic/agent-orchestrator/internal/ticket"
 	"github.com/anthropic/agent-orchestrator/internal/ui"
 	"github.com/spf13/cobra"
 )
 
 var (
-	analyzeScope     []string
-	analyzeAutoGen   bool
+	analyzeScope   []string
+	analyzeAutoGen bool
 )
 
 var analyzeCmd = &cobra.Command{
 	Use:   "analyze",
-	Short: "分析現有專案，產生改進 issues 和 tickets",
-	Long: `分析現有專案的程式碼，找出可改進的地方，包括效能問題、重構建議、安全性問題等。
-
-範例:
-  agent-orchestrator analyze
-  agent-orchestrator analyze --scope performance,refactor
-  agent-orchestrator analyze --scope security --auto`,
-	RunE: runAnalyze,
+	Short: i18n.CmdAnalyzeShort,
+	Long:  i18n.CmdAnalyzeLong,
+	RunE:  runAnalyze,
 }
 
 func init() {
-	analyzeCmd.Flags().StringSliceVar(&analyzeScope, "scope", []string{"all"}, 
-		"分析範圍: all, performance, refactor, security, test, docs (可用逗號分隔多個)")
-	analyzeCmd.Flags().BoolVar(&analyzeAutoGen, "auto", false, "自動產生 tickets 不詢問")
+	analyzeCmd.Flags().StringSliceVar(&analyzeScope, "scope", []string{"all"}, i18n.FlagScope)
+	analyzeCmd.Flags().BoolVar(&analyzeAutoGen, "auto", false, i18n.FlagAuto)
 }
 
 func runAnalyze(cmd *cobra.Command, args []string) error {
 	ctx := context.Background()
 	w := os.Stdout
 
-	ui.PrintHeader(w, "專案分析")
-	ui.PrintInfo(w, "分析專案: "+cfg.ProjectRoot)
-	ui.PrintInfo(w, "分析範圍: "+strings.Join(analyzeScope, ", "))
+	ui.PrintHeader(w, i18n.UIProjectAnalyze)
+	ui.PrintInfo(w, fmt.Sprintf(i18n.MsgAnalyzeProject, cfg.ProjectRoot))
+	ui.PrintInfo(w, fmt.Sprintf(i18n.MsgAnalyzeScope, strings.Join(analyzeScope, ", ")))
 
 	// Create agent caller
-	caller := agent.NewCaller(
-		cfg.AgentCommand,
-		cfg.AgentForce,
-		cfg.AgentOutputFormat,
-		cfg.LogsDir,
-	)
-	caller.SetDryRun(cfg.DryRun)
-	caller.SetVerbose(cfg.Verbose)
-
-	if !caller.IsAvailable() && !cfg.DryRun {
-		ui.PrintError(w, "找不到 agent 指令，請確保已安裝 Cursor CLI")
-		return nil
+	caller, err := CreateAgentCaller()
+	if err != nil {
+		return err
 	}
 
 	analyzeAgent := agent.NewAnalyzeAgent(caller, cfg.ProjectRoot)
 	scope := agent.ParseScopes(analyzeScope)
 
 	// Run analysis
-	spinner := ui.NewSpinner("分析專案中...", w)
+	spinner := ui.NewSpinner(i18n.SpinnerAnalyzing, w)
 	spinner.Start()
 
 	issues, err := analyzeAgent.Analyze(ctx, scope)
 	if err != nil {
-		spinner.Fail("分析失敗")
+		spinner.Fail(i18n.SpinnerFailAnalysis)
 		return err
 	}
-	spinner.Success("分析完成")
+	spinner.Success(i18n.MsgAnalysisComplete)
 
 	if issues.Count() == 0 {
-		ui.PrintSuccess(w, "沒有發現問題！")
+		ui.PrintSuccess(w, i18n.MsgNoIssuesFound)
 		return nil
 	}
 
 	// Display issues by category
-	ui.PrintHeader(w, "分析報告")
+	ui.PrintHeader(w, i18n.UIAnalysisReport)
 
 	categories := []struct {
 		name     string
 		category string
 	}{
-		{"效能問題", "performance"},
-		{"重構建議", "refactor"},
-		{"安全性問題", "security"},
-		{"測試覆蓋", "test"},
-		{"文件缺失", "docs"},
+		{i18n.CategoryPerformance, "performance"},
+		{i18n.CategoryRefactor, "refactor"},
+		{i18n.CategorySecurity, "security"},
+		{i18n.CategoryTest, "test"},
+		{i18n.CategoryDocs, "docs"},
 	}
 
 	for _, cat := range categories {
@@ -102,14 +90,14 @@ func runAnalyze(cmd *cobra.Command, args []string) error {
 	}
 
 	ui.PrintInfo(w, "")
-	ui.PrintInfo(w, "共發現 "+string(rune('0'+issues.Count()))+" 個問題")
+	ui.PrintInfo(w, fmt.Sprintf(i18n.MsgFoundIssues, issues.Count()))
 
 	// Ask to generate tickets
 	generateTickets := analyzeAutoGen
 	if !generateTickets && !cfg.Quiet {
 		prompt := ui.NewPrompt(os.Stdin, w)
 		var err error
-		generateTickets, err = prompt.Confirm("要產生對應的 tickets 嗎？", true)
+		generateTickets, err = prompt.Confirm(i18n.PromptGenerateTickets, true)
 		if err != nil {
 			return err
 		}
@@ -131,20 +119,23 @@ func generateTicketsFromIssues(issues *ticket.IssueList) error {
 	// Save tickets
 	store := ticket.NewStore(cfg.TicketsDir)
 	if err := store.Init(); err != nil {
-		return err
+		// Store initialization is fatal
+		return orcherrors.ErrStoreInit(err)
 	}
 
 	for _, t := range ticketList.Tickets {
 		if err := store.Save(t); err != nil {
-			ui.PrintError(w, "儲存 ticket 失敗: "+t.ID)
+			// Ticket save failure is recoverable - log and continue
+			recErr := orcherrors.ErrSaveTicket(t.ID, err)
+			ui.PrintWarning(w, recErr.Error())
 			continue
 		}
-		ui.PrintSuccess(w, "建立 ticket: "+t.ID+" - "+t.Title)
+		ui.PrintSuccess(w, fmt.Sprintf(i18n.MsgTicketCreated, t.ID, t.Title))
 	}
 
 	ui.PrintInfo(w, "")
-	ui.PrintSuccess(w, "已產生 "+string(rune('0'+ticketList.Count()))+" 個 tickets 到 "+cfg.TicketsDir)
-	ui.PrintInfo(w, "執行 'agent-orchestrator work' 開始處理 tickets")
+	ui.PrintSuccess(w, fmt.Sprintf(i18n.MsgToDirectory, ticketList.Count(), cfg.TicketsDir))
+	ui.PrintInfo(w, i18n.HintRunWork)
 
 	return nil
 }

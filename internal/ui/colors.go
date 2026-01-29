@@ -87,3 +87,19 @@ func SeverityStyle(severity string) lipgloss.Style {
 		return lipgloss.NewStyle().Foreground(ColorMuted)
 	}
 }
+
+// Truncate truncates a string to the specified maximum length.
+// If the string exceeds maxLen, it will be truncated and "..." will be appended.
+// The returned string will be at most maxLen characters long (including the ellipsis).
+func Truncate(s string, maxLen int) string {
+	if maxLen <= 0 {
+		return ""
+	}
+	if len(s) <= maxLen {
+		return s
+	}
+	if maxLen <= 3 {
+		return s[:maxLen]
+	}
+	return s[:maxLen-3] + "..."
+}

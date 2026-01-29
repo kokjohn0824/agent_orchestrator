@@ -9,6 +9,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/anthropic/agent-orchestrator/internal/jsonutil"
 	"github.com/anthropic/agent-orchestrator/internal/ticket"
 )
 
@@ -140,20 +141,20 @@ func (pa *PlanningAgent) mapToTicket(data map[string]interface{}) *ticket.Ticket
 		t.EstimatedComplexity = complexity
 	}
 
-	if deps, ok := data["dependencies"].([]interface{}); ok {
-		t.Dependencies = toStringSlice(deps)
+	if deps := jsonutil.GetStringSlice(data, "dependencies"); deps != nil {
+		t.Dependencies = deps
 	}
 
-	if criteria, ok := data["acceptance_criteria"].([]interface{}); ok {
-		t.AcceptanceCriteria = toStringSlice(criteria)
+	if criteria := jsonutil.GetStringSlice(data, "acceptance_criteria"); criteria != nil {
+		t.AcceptanceCriteria = criteria
 	}
 
-	if files, ok := data["files_to_create"].([]interface{}); ok {
-		t.FilesToCreate = toStringSlice(files)
+	if files := jsonutil.GetStringSlice(data, "files_to_create"); files != nil {
+		t.FilesToCreate = files
 	}
 
-	if files, ok := data["files_to_modify"].([]interface{}); ok {
-		t.FilesToModify = toStringSlice(files)
+	if files := jsonutil.GetStringSlice(data, "files_to_modify"); files != nil {
+		t.FilesToModify = files
 	}
 
 	return t
@@ -205,16 +206,6 @@ func (pa *PlanningAgent) createMockTickets() []*ticket.Ticket {
 			CreatedAt:           time.Now(),
 		},
 	}
-}
-
-func toStringSlice(slice []interface{}) []string {
-	result := make([]string, 0)
-	for _, v := range slice {
-		if s, ok := v.(string); ok {
-			result = append(result, s)
-		}
-	}
-	return result
 }
 
 // InitAgent handles interactive project initialization

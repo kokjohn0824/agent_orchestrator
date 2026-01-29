@@ -30,6 +30,9 @@ type Config struct {
 	Debug       bool `mapstructure:"debug"`
 	Quiet       bool `mapstructure:"quiet"`
 
+	// Security settings
+	DisableDetailedLog bool `mapstructure:"disable_detailed_log"` // Disable logging of prompts and outputs
+
 	// Analyze settings
 	AnalyzeScopes []string `mapstructure:"analyze_scopes"`
 }
@@ -38,20 +41,21 @@ type Config struct {
 func DefaultConfig() *Config {
 	cwd, _ := os.Getwd()
 	return &Config{
-		AgentCommand:      "agent",
-		AgentOutputFormat: "text",
-		AgentForce:        true,
-		AgentTimeout:      600,
-		ProjectRoot:       cwd,
-		TicketsDir:        ".tickets",
-		LogsDir:           ".agent-logs",
-		DocsDir:           "docs",
-		MaxParallel:       3,
-		DryRun:            false,
-		Verbose:           false,
-		Debug:             false,
-		Quiet:             false,
-		AnalyzeScopes:     []string{"all"},
+		AgentCommand:       "agent",
+		AgentOutputFormat:  "text",
+		AgentForce:         true,
+		AgentTimeout:       600,
+		ProjectRoot:        cwd,
+		TicketsDir:         ".tickets",
+		LogsDir:            ".agent-logs",
+		DocsDir:            "docs",
+		MaxParallel:        3,
+		DryRun:             false,
+		Verbose:            false,
+		Debug:              false,
+		Quiet:              false,
+		DisableDetailedLog: false,
+		AnalyzeScopes:      []string{"all"},
 	}
 }
 
@@ -86,6 +90,7 @@ func Load() (*Config, error) {
 	v.SetDefault("logs_dir", cfg.LogsDir)
 	v.SetDefault("docs_dir", cfg.DocsDir)
 	v.SetDefault("max_parallel", cfg.MaxParallel)
+	v.SetDefault("disable_detailed_log", cfg.DisableDetailedLog)
 	v.SetDefault("analyze_scopes", cfg.AnalyzeScopes)
 
 	// Try to read config file (don't fail if not found)
@@ -137,6 +142,7 @@ func (c *Config) Save(path string) error {
 	v.Set("logs_dir", c.LogsDir)
 	v.Set("docs_dir", c.DocsDir)
 	v.Set("max_parallel", c.MaxParallel)
+	v.Set("disable_detailed_log", c.DisableDetailedLog)
 	v.Set("analyze_scopes", c.AnalyzeScopes)
 
 	return v.WriteConfigAs(path)
@@ -170,13 +176,26 @@ func (c *Config) Validate() error {
 
 // EnsureDirs creates necessary directories
 func (c *Config) EnsureDirs() error {
-	dirs := []string{
+	// Sensitive directories that should be restricted (owner only)
+	sensitiveDirs := []string{
 		c.TicketsDir,
 		c.LogsDir,
+	}
+
+	// Non-sensitive directories that can be world-readable
+	publicDirs := []string{
 		c.DocsDir,
 	}
 
-	for _, dir := range dirs {
+	// Use 0700 for sensitive directories (tickets and logs may contain sensitive data)
+	for _, dir := range sensitiveDirs {
+		if err := os.MkdirAll(dir, 0700); err != nil {
+			return fmt.Errorf("failed to create directory %s: %w", dir, err)
+		}
+	}
+
+	// Use 0755 for public directories
+	for _, dir := range publicDirs {
 		if err := os.MkdirAll(dir, 0755); err != nil {
 			return fmt.Errorf("failed to create directory %s: %w", dir, err)
 		}
@@ -215,10 +234,8 @@ func GetConfigFilePath() string {
 
 // GenerateDefaultConfigFile creates a default config file
 func GenerateDefaultConfigFile(path string) error {
-	cfg := DefaultConfig()
-
 	content := `# Agent Orchestrator Configuration
-# 詳細說明請參考: https://github.com/anthropic/agent-orchestrator
+# 詳細說明請參考專案的 README.md 文件
 
 # Agent 設定
 agent_command: agent           # Cursor Agent CLI 指令
@@ -234,6 +251,9 @@ docs_dir: docs                 # 文件目錄
 # 執行設定
 max_parallel: 3                # 最大並行 Agent 數量
 
+# 安全設定
+disable_detailed_log: false    # 設為 true 可禁用詳細日誌 (保護敏感資訊)
+
 # 分析範圍 (用於 analyze 指令)
 analyze_scopes:
   - all                        # 可選: performance, refactor, security, test, docs, all
@@ -241,7 +261,8 @@ analyze_scopes:
 
 	dir := filepath.Dir(path)
 	if dir != "." && dir != "" {
-		if err := os.MkdirAll(dir, 0755); err != nil {
+		// Use 0700 for config directory to protect potential sensitive settings
+		if err := os.MkdirAll(dir, 0700); err != nil {
 			return fmt.Errorf("failed to create config directory: %w", err)
 		}
 	}
@@ -249,8 +270,6 @@ analyze_scopes:
 	if err := os.WriteFile(path, []byte(content), 0644); err != nil {
 		return fmt.Errorf("failed to write config file: %w", err)
 	}
-
-	_ = cfg // silence unused warning
 
 	return nil
 }

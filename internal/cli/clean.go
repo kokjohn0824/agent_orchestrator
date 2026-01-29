@@ -3,6 +3,7 @@ package cli
 import (
 	"os"
 
+	"github.com/anthropic/agent-orchestrator/internal/i18n"
 	"github.com/anthropic/agent-orchestrator/internal/ticket"
 	"github.com/anthropic/agent-orchestrator/internal/ui"
 	"github.com/spf13/cobra"
@@ -14,17 +15,13 @@ var (
 
 var cleanCmd = &cobra.Command{
 	Use:   "clean",
-	Short: "清除所有 tickets 和 logs",
-	Long: `清除所有 tickets 和 agent 執行日誌。
-
-範例:
-  agent-orchestrator clean
-  agent-orchestrator clean --force  # 不詢問直接清除`,
-	RunE: runClean,
+	Short: i18n.CmdCleanShort,
+	Long:  i18n.CmdCleanLong,
+	RunE:  runClean,
 }
 
 func init() {
-	cleanCmd.Flags().BoolVarP(&cleanForce, "force", "f", false, "不詢問直接清除")
+	cleanCmd.Flags().BoolVarP(&cleanForce, "force", "f", false, i18n.FlagForce)
 }
 
 func runClean(cmd *cobra.Command, args []string) error {
@@ -45,16 +42,16 @@ func runClean(cmd *cobra.Command, args []string) error {
 	}
 
 	if total == 0 {
-		ui.PrintInfo(w, "沒有資料需要清除")
+		ui.PrintInfo(w, i18n.MsgNoDataToClean)
 		return nil
 	}
 
-	ui.PrintHeader(w, "清除資料")
-	ui.PrintWarning(w, "即將刪除以下資料:")
-	ui.PrintInfo(w, "  - Tickets 目錄: "+cfg.TicketsDir)
-	ui.PrintInfo(w, "  - Logs 目錄: "+cfg.LogsDir)
+	ui.PrintHeader(w, i18n.UICleanData)
+	ui.PrintWarning(w, i18n.MsgAboutToDelete)
+	ui.PrintInfo(w, "  - "+i18n.MsgTicketsDir+cfg.TicketsDir)
+	ui.PrintInfo(w, "  - "+i18n.MsgLogsDir+cfg.LogsDir)
 	ui.PrintInfo(w, "")
-	ui.PrintInfo(w, "目前狀態:")
+	ui.PrintInfo(w, i18n.MsgCurrentStatus)
 
 	for status, count := range counts {
 		if count > 0 {
@@ -65,30 +62,30 @@ func runClean(cmd *cobra.Command, args []string) error {
 	// Confirm
 	if !cleanForce {
 		prompt := ui.NewPrompt(os.Stdin, w)
-		ok, err := prompt.Confirm("確定要清除所有資料嗎？", false)
+		ok, err := prompt.Confirm(i18n.PromptConfirmClean, false)
 		if err != nil {
 			return err
 		}
 		if !ok {
-			ui.PrintInfo(w, "已取消")
+			ui.PrintInfo(w, i18n.MsgCancelled)
 			return nil
 		}
 	}
 
 	// Clean tickets
 	if err := store.Clean(); err != nil {
-		ui.PrintError(w, "清除 tickets 失敗: "+err.Error())
+		ui.PrintError(w, i18n.ErrCleanTicketsFailed+err.Error())
 	}
 
 	// Clean logs
 	if err := os.RemoveAll(cfg.LogsDir); err != nil {
-		ui.PrintError(w, "清除 logs 失敗: "+err.Error())
+		ui.PrintError(w, i18n.ErrCleanLogsFailed+err.Error())
 	}
 
 	// Re-init store
 	store.Init()
 
-	ui.PrintSuccess(w, "已清除所有資料")
+	ui.PrintSuccess(w, i18n.MsgDataCleared)
 
 	return nil
 }

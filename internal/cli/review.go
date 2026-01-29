@@ -2,24 +2,22 @@ package cli
 
 import (
 	"context"
+	"fmt"
 	"os"
 	"os/exec"
 	"strings"
 
 	"github.com/anthropic/agent-orchestrator/internal/agent"
+	"github.com/anthropic/agent-orchestrator/internal/i18n"
 	"github.com/anthropic/agent-orchestrator/internal/ui"
 	"github.com/spf13/cobra"
 )
 
 var reviewCmd = &cobra.Command{
 	Use:   "review [files...]",
-	Short: "執行程式碼審查",
-	Long: `對變更的檔案執行程式碼審查。如果沒有指定檔案，會自動取得 git 變更的檔案。
-
-範例:
-  agent-orchestrator review
-  agent-orchestrator review src/main.go src/util.go`,
-	RunE: runReview,
+	Short: i18n.CmdReviewShort,
+	Long:  i18n.CmdReviewLong,
+	RunE:  runReview,
 }
 
 func runReview(cmd *cobra.Command, args []string) error {
@@ -32,82 +30,78 @@ func runReview(cmd *cobra.Command, args []string) error {
 		files = args
 	} else {
 		// Get changed files from git
-		files = getGitChangedFiles()
+		files = getGitChangedFiles(ctx)
 	}
 
 	if len(files) == 0 {
-		ui.PrintInfo(w, "沒有檔案需要審查")
+		ui.PrintInfo(w, i18n.MsgNoFilesToReview)
 		return nil
 	}
 
-	ui.PrintHeader(w, "程式碼審查")
-	ui.PrintInfo(w, "審查檔案:")
+	ui.PrintHeader(w, i18n.UICodeReview)
+	ui.PrintInfo(w, i18n.MsgReviewFiles)
 	for _, f := range files {
 		ui.PrintInfo(w, "  - "+f)
 	}
 
 	// Create agent caller
-	caller := agent.NewCaller(
-		cfg.AgentCommand,
-		cfg.AgentForce,
-		cfg.AgentOutputFormat,
-		cfg.LogsDir,
-	)
-	caller.SetDryRun(cfg.DryRun)
-	caller.SetVerbose(cfg.Verbose)
-
-	if !caller.IsAvailable() && !cfg.DryRun {
-		ui.PrintError(w, "找不到 agent 指令，請確保已安裝 Cursor CLI")
+	caller, err := CreateAgentCaller()
+	if err != nil {
+		ui.PrintError(w, i18n.ErrAgentNotFound)
 		return nil
 	}
 
 	reviewAgent := agent.NewReviewAgent(caller, cfg.ProjectRoot)
 
 	// Run review
-	spinner := ui.NewSpinner("審查程式碼中...", w)
+	spinner := ui.NewSpinner(i18n.SpinnerReviewing, w)
 	spinner.Start()
 
 	result, reviewResult, err := reviewAgent.Review(ctx, files)
 	if err != nil {
-		spinner.Fail("審查失敗")
+		spinner.Fail(i18n.SpinnerFailReview)
 		return err
 	}
 
 	if reviewResult != nil {
 		if reviewResult.Status == "APPROVED" {
-			spinner.Success("審查通過")
+			spinner.Success(i18n.MsgReviewApproved)
 		} else if reviewResult.Status == "CHANGES_REQUESTED" {
-			spinner.Fail("審查需要修改")
+			spinner.Fail(i18n.SpinnerFailReviewNeeds)
 		} else {
-			spinner.Info("審查完成")
+			spinner.Info(i18n.MsgReviewComplete)
 		}
 
 		if reviewResult.Summary != "" {
 			ui.PrintInfo(w, "")
-			ui.PrintInfo(w, "摘要: "+reviewResult.Summary)
+			ui.PrintInfo(w, fmt.Sprintf(i18n.MsgSummary, reviewResult.Summary))
 		}
 	} else {
-		spinner.Success("審查完成")
+		spinner.Success(i18n.MsgReviewComplete)
 	}
 
 	// Print full output if verbose
 	if cfg.Verbose && result != nil {
 		ui.PrintInfo(w, "")
-		ui.PrintInfo(w, "完整輸出:")
+		ui.PrintInfo(w, i18n.MsgFullOutput)
 		ui.PrintInfo(w, result.Output)
 	}
 
 	return nil
 }
 
-func getGitChangedFiles() []string {
+func getGitChangedFiles(ctx context.Context) []string {
 	// Try git diff --name-only HEAD
-	cmd := exec.Command("git", "diff", "--name-only", "HEAD")
+	cmd := exec.CommandContext(ctx, "git", "diff", "--name-only", "HEAD")
 	cmd.Dir = cfg.ProjectRoot
 	output, err := cmd.Output()
 	if err != nil {
+		// Check if context was cancelled
+		if ctx.Err() != nil {
+			return nil
+		}
 		// Try git status --porcelain
-		cmd = exec.Command("git", "status", "--porcelain")
+		cmd = exec.CommandContext(ctx, "git", "status", "--porcelain")
 		cmd.Dir = cfg.ProjectRoot
 		output, err = cmd.Output()
 		if err != nil {

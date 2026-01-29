@@ -2,22 +2,20 @@ package cli
 
 import (
 	"context"
+	"fmt"
 	"os"
 
 	"github.com/anthropic/agent-orchestrator/internal/agent"
+	"github.com/anthropic/agent-orchestrator/internal/i18n"
 	"github.com/anthropic/agent-orchestrator/internal/ui"
 	"github.com/spf13/cobra"
 )
 
 var initCmd = &cobra.Command{
 	Use:   "init [goal]",
-	Short: "互動式專案初始化，產生 milestone",
-	Long: `透過一系列問題來了解專案需求，然後產生對應的 milestone 文件。
-
-範例:
-  agent-orchestrator init "建立一個 Log 分析工具，使用 Drain 演算法"
-  agent-orchestrator init  # 互動模式輸入目標`,
-	RunE: runInit,
+	Short: i18n.CmdInitShort,
+	Long:  i18n.CmdInitLong,
+	RunE:  runInit,
 }
 
 func runInit(cmd *cobra.Command, args []string) error {
@@ -31,43 +29,34 @@ func runInit(cmd *cobra.Command, args []string) error {
 	} else {
 		prompt := ui.NewPrompt(os.Stdin, w)
 		var err error
-		goal, err = prompt.Ask("請描述你的專案目標")
+		goal, err = prompt.Ask(i18n.PromptProjectGoal)
 		if err != nil {
 			return err
 		}
 	}
 
-	ui.PrintHeader(w, "專案初始化")
-	ui.PrintInfo(w, "專案目標: "+goal)
+	ui.PrintHeader(w, i18n.UIProjectInit)
+	ui.PrintInfo(w, fmt.Sprintf(i18n.MsgProjectGoal, goal))
 
 	// Create agent caller
-	caller := agent.NewCaller(
-		cfg.AgentCommand,
-		cfg.AgentForce,
-		cfg.AgentOutputFormat,
-		cfg.LogsDir,
-	)
-	caller.SetDryRun(cfg.DryRun)
-	caller.SetVerbose(cfg.Verbose)
-
-	if !caller.IsAvailable() && !cfg.DryRun {
-		ui.PrintError(w, "找不到 agent 指令，請確保已安裝 Cursor CLI")
+	caller, err := CreateAgentCaller()
+	if err != nil {
+		ui.PrintError(w, i18n.ErrAgentNotFound)
 		return nil
 	}
 
 	initAgent := agent.NewInitAgent(caller, cfg.ProjectRoot, cfg.DocsDir)
 
 	// Generate questions
-	ui.PrintInfo(w, "讓我了解更多細節...")
-	spinner := ui.NewSpinner("產生問題中...", w)
+	spinner := ui.NewSpinner(i18n.SpinnerGeneratingQuestions, w)
 	spinner.Start()
 
 	questions, err := initAgent.GenerateQuestions(ctx, goal)
 	if err != nil {
-		spinner.Fail("產生問題失敗")
+		spinner.Fail(i18n.SpinnerFailQuestions)
 		return err
 	}
-	spinner.Success("已產生問題")
+	spinner.Success(i18n.MsgQuestionsGenerated)
 
 	// Ask questions
 	prompt := ui.NewPrompt(os.Stdin, w)
@@ -85,20 +74,20 @@ func runInit(cmd *cobra.Command, args []string) error {
 
 	// Generate milestone
 	ui.PrintInfo(w, "")
-	spinner = ui.NewSpinner("產生 milestone 文件中...", w)
+	spinner = ui.NewSpinner(i18n.SpinnerGeneratingMilestone, w)
 	spinner.Start()
 
 	milestonePath, err := initAgent.GenerateMilestone(ctx, goal, questions, answers)
 	if err != nil {
-		spinner.Fail("產生 milestone 失敗")
+		spinner.Fail(i18n.SpinnerFailMilestone)
 		return err
 	}
-	spinner.Success("已產生 milestone")
+	spinner.Success(i18n.MsgMilestoneGenerated)
 
-	ui.PrintSuccess(w, "已產生 milestone: "+milestonePath)
+	ui.PrintSuccess(w, fmt.Sprintf(i18n.MsgMilestoneCreated, milestonePath))
 
 	// Ask if user wants to continue to plan
-	continueOk, err := prompt.Confirm("要立即執行 plan 產生 tickets 嗎？", true)
+	continueOk, err := prompt.Confirm(i18n.PromptContinuePlan, true)
 	if err != nil {
 		return err
 	}
@@ -107,6 +96,6 @@ func runInit(cmd *cobra.Command, args []string) error {
 		return runPlanWithFile(ctx, milestonePath)
 	}
 
-	ui.PrintInfo(w, "你可以稍後執行: agent-orchestrator plan "+milestonePath)
+	ui.PrintInfo(w, fmt.Sprintf(i18n.HintRunPlanLater, milestonePath))
 	return nil
 }

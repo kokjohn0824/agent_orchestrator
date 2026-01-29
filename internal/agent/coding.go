@@ -8,6 +8,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/anthropic/agent-orchestrator/internal/jsonutil"
 	"github.com/anthropic/agent-orchestrator/internal/ticket"
 )
 
@@ -245,13 +246,13 @@ func (aa *AnalyzeAgent) parseIssues(data map[string]interface{}) (*ticket.IssueL
 		}
 
 		issue := &ticket.Issue{
-			ID:          getString(issueMap, "id"),
-			Category:    getString(issueMap, "category"),
-			Severity:    getString(issueMap, "severity"),
-			Title:       getString(issueMap, "title"),
-			Description: getString(issueMap, "description"),
-			Location:    getString(issueMap, "location"),
-			Suggestion:  getString(issueMap, "suggestion"),
+			ID:          jsonutil.GetString(issueMap, "id"),
+			Category:    jsonutil.GetString(issueMap, "category"),
+			Severity:    jsonutil.GetString(issueMap, "severity"),
+			Title:       jsonutil.GetString(issueMap, "title"),
+			Description: jsonutil.GetString(issueMap, "description"),
+			Location:    jsonutil.GetString(issueMap, "location"),
+			Suggestion:  jsonutil.GetString(issueMap, "suggestion"),
 		}
 
 		if issue.ID != "" && issue.Title != "" {
@@ -303,11 +304,4 @@ func (aa *AnalyzeAgent) createMockIssues(scope AnalyzeScope) *ticket.IssueList {
 	}
 
 	return il
-}
-
-func getString(m map[string]interface{}, key string) string {
-	if v, ok := m[key].(string); ok {
-		return v
-	}
-	return ""
 }

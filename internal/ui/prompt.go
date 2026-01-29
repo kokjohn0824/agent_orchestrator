@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"io"
 	"strings"
+
+	"github.com/anthropic/agent-orchestrator/internal/i18n"
 )
 
 // Prompt handles interactive user prompts
@@ -39,7 +41,7 @@ func (p *Prompt) Ask(question string) (string, error) {
 // AskMultiline asks a question that can have multiple lines of input
 func (p *Prompt) AskMultiline(question string) ([]string, error) {
 	fmt.Fprintf(p.writer, "%s %s\n", StyleInfo.Render("?"), question)
-	fmt.Fprintln(p.writer, StyleMuted.Render("  (輸入空行結束)"))
+	fmt.Fprintln(p.writer, StyleMuted.Render("  "+i18n.MsgInputEndHint))
 
 	var lines []string
 	scanner := bufio.NewScanner(p.reader)
@@ -98,7 +100,7 @@ func (p *Prompt) Select(question string, options []string) (int, error) {
 	for i, opt := range options {
 		fmt.Fprintf(p.writer, "  %s %s\n", StyleMuted.Render(fmt.Sprintf("%d.", i+1)), opt)
 	}
-	fmt.Fprint(p.writer, StyleMuted.Render("  選擇 (1-"+fmt.Sprint(len(options))+"): "))
+	fmt.Fprint(p.writer, StyleMuted.Render(fmt.Sprintf("  "+i18n.MsgSelectRange, len(options))))
 
 	scanner := bufio.NewScanner(p.reader)
 	if scanner.Scan() {
@@ -109,7 +111,7 @@ func (p *Prompt) Select(question string, options []string) (int, error) {
 				return choice - 1, nil
 			}
 		}
-		return 0, fmt.Errorf("無效的選擇: %s", answer)
+		return 0, fmt.Errorf(i18n.MsgInvalidSelection, answer)
 	}
 	if err := scanner.Err(); err != nil {
 		return 0, err

@@ -5,33 +5,29 @@ import (
 	"os"
 
 	"github.com/anthropic/agent-orchestrator/internal/config"
+	"github.com/anthropic/agent-orchestrator/internal/i18n"
 	"github.com/anthropic/agent-orchestrator/internal/ui"
 	"github.com/spf13/cobra"
 )
 
 var configCmd = &cobra.Command{
 	Use:   "config",
-	Short: "設定管理",
-	Long: `顯示或管理 agent-orchestrator 設定。
-
-範例:
-  agent-orchestrator config           # 顯示目前設定
-  agent-orchestrator config init      # 產生預設設定檔
-  agent-orchestrator config path      # 顯示設定檔路徑`,
+	Short: i18n.CmdConfigShort,
+	Long:  i18n.CmdConfigLong,
 }
 
 var configShowCmd = &cobra.Command{
 	Use:   "show",
-	Short: "顯示目前設定",
+	Short: i18n.CmdConfigShowShort,
 	RunE: func(cmd *cobra.Command, args []string) error {
 		w := os.Stdout
 
-		ui.PrintHeader(w, "目前設定")
+		ui.PrintHeader(w, i18n.UICurrentConfig)
 
 		// Load config
 		cfg, err := config.Load()
 		if err != nil {
-			ui.PrintError(w, "載入設定失敗: "+err.Error())
+			ui.PrintError(w, fmt.Sprintf(i18n.ErrLoadConfigFailed, err.Error()))
 			return nil
 		}
 
@@ -48,7 +44,7 @@ var configShowCmd = &cobra.Command{
 		table.Render(w)
 
 		ui.PrintInfo(w, "")
-		ui.PrintInfo(w, "設定檔路徑: "+config.GetConfigFilePath())
+		ui.PrintInfo(w, fmt.Sprintf(i18n.MsgConfigFilePath, config.GetConfigFilePath()))
 
 		return nil
 	},
@@ -56,7 +52,7 @@ var configShowCmd = &cobra.Command{
 
 var configInitCmd = &cobra.Command{
 	Use:   "init",
-	Short: "產生預設設定檔",
+	Short: i18n.CmdConfigInitShort,
 	RunE: func(cmd *cobra.Command, args []string) error {
 		w := os.Stdout
 
@@ -64,21 +60,21 @@ var configInitCmd = &cobra.Command{
 
 		// Check if already exists
 		if _, err := os.Stat(path); err == nil {
-			ui.PrintWarning(w, "設定檔已存在: "+path)
+			ui.PrintWarning(w, fmt.Sprintf(i18n.MsgConfigExists, path))
 			prompt := ui.NewPrompt(os.Stdin, w)
-			ok, err := prompt.Confirm("要覆蓋嗎？", false)
+			ok, err := prompt.Confirm(i18n.PromptOverwrite, false)
 			if err != nil || !ok {
 				return nil
 			}
 		}
 
 		if err := config.GenerateDefaultConfigFile(path); err != nil {
-			ui.PrintError(w, "產生設定檔失敗: "+err.Error())
+			ui.PrintError(w, fmt.Sprintf(i18n.ErrGenerateConfigFailed, err.Error()))
 			return nil
 		}
 
-		ui.PrintSuccess(w, "已產生設定檔: "+path)
-		ui.PrintInfo(w, "你可以編輯此檔案來自訂設定")
+		ui.PrintSuccess(w, fmt.Sprintf(i18n.MsgConfigGenerated, path))
+		ui.PrintInfo(w, i18n.MsgEditConfigHint)
 
 		return nil
 	},
@@ -86,7 +82,7 @@ var configInitCmd = &cobra.Command{
 
 var configPathCmd = &cobra.Command{
 	Use:   "path",
-	Short: "顯示設定檔路徑",
+	Short: i18n.CmdConfigPathShort,
 	Run: func(cmd *cobra.Command, args []string) {
 		fmt.Println(config.GetConfigFilePath())
 	},

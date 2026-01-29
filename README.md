@@ -15,11 +15,11 @@
 ### 從原始碼建置
 
 ```bash
-# Clone 專案
-git clone https://github.com/anthropic/agent-orchestrator.git
-cd agent-orchestrator
+# Clone 專案 (請替換為實際的 repository URL)
+# git clone https://github.com/YOUR_ORG/agent-orchestrator.git
+# cd agent-orchestrator
 
-# 建置
+# 或從本地目錄建置
 make build
 
 # 安裝到 GOPATH/bin
@@ -279,6 +279,28 @@ make fmt
 
 # Lint
 make lint
+```
+
+## 外部連結與文件
+
+本專案參考了以下外部資源：
+
+| 資源 | 用途 | 狀態 |
+|------|------|------|
+| [Cursor CLI 文件](https://cursor.com/docs/cli/headless) | Cursor Headless Mode 使用指南 | 官方文件 |
+
+### 連結維護說明
+
+- 外部連結可能會隨時間失效或變更
+- 建議定期驗證連結的有效性
+- 關鍵的 CLI 使用方法已在本文件中說明，減少對外部連結的依賴
+- 如發現失效連結，請提交 Issue 或 PR 更新
+
+### 驗證連結
+
+```bash
+# 使用 curl 驗證連結是否有效
+curl -I https://cursor.com/docs/cli/headless
 ```
 
 ## 授權

@@ -44,14 +44,15 @@ build-all: ## Build for all platforms
 	GOOS=windows GOARCH=amd64 $(GOBUILD) $(LDFLAGS) -o $(DIST_DIR)/$(BINARY_NAME)-windows-amd64.exe $(MAIN_PATH)
 	@echo "Built binaries in $(DIST_DIR)/"
 
-install: build ## Install the binary to GOPATH/bin
+install: build ## Install the binary to ~/bin
 	@echo "Installing $(BINARY_NAME)..."
-	cp $(BUILD_DIR)/$(BINARY_NAME) $(GOPATH)/bin/$(BINARY_NAME)
-	@echo "Installed to $(GOPATH)/bin/$(BINARY_NAME)"
+	@mkdir -p $(HOME)/bin
+	cp $(BUILD_DIR)/$(BINARY_NAME) $(HOME)/bin/$(BINARY_NAME)
+	@echo "Installed to $(HOME)/bin/$(BINARY_NAME)"
 
-uninstall: ## Remove the binary from GOPATH/bin
+uninstall: ## Remove the binary from ~/bin
 	@echo "Uninstalling $(BINARY_NAME)..."
-	rm -f $(GOPATH)/bin/$(BINARY_NAME)
+	rm -f $(HOME)/bin/$(BINARY_NAME)
 	@echo "Uninstalled"
 
 ## Development targets

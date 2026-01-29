@@ -10,7 +10,9 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/anthropic/agent-orchestrator/internal/ui"
@@ -74,13 +76,14 @@ func WithStreamHandler(fn func(StreamEvent)) CallOption {
 
 // Caller handles Cursor Agent CLI invocations
 type Caller struct {
-	Command      string
-	Force        bool
-	OutputFormat string
-	DryRun       bool
-	LogDir       string
-	Verbose      bool
-	writer       io.Writer
+	Command            string
+	Force              bool
+	OutputFormat       string
+	DryRun             bool
+	LogDir             string
+	Verbose            bool
+	DisableDetailedLog bool // When true, disables logging of prompts and outputs
+	writer             io.Writer
 }
 
 // NewCaller creates a new agent caller
@@ -215,7 +218,8 @@ func (c *Caller) executeNormal(ctx context.Context, cmd *exec.Cmd, logFile *os.F
 	}
 
 	if logFile != nil {
-		logFile.WriteString(string(output))
+		// Sanitize output before writing to log
+		logFile.WriteString(sanitizeSensitiveData(string(output)))
 	}
 
 	return result, nil
@@ -250,7 +254,8 @@ func (c *Caller) executeStream(ctx context.Context, cmd *exec.Cmd, logFile *os.F
 		outputBuilder.WriteString(line + "\n")
 
 		if logFile != nil {
-			logFile.WriteString(line + "\n")
+			// Sanitize each line before writing to log
+			logFile.WriteString(sanitizeSensitiveData(line) + "\n")
 		}
 
 		// Try to parse as JSON event
@@ -357,12 +362,19 @@ func (c *Caller) logToolCall(toolCall map[string]interface{}) {
 }
 
 // createLogFile creates a log file for the agent call
+// Security: Uses 0700 for directory and 0600 for file to protect sensitive data
 func (c *Caller) createLogFile() *os.File {
 	if c.LogDir == "" {
 		return nil
 	}
 
-	if err := os.MkdirAll(c.LogDir, 0755); err != nil {
+	// Disable detailed logging if configured
+	if c.DisableDetailedLog {
+		return nil
+	}
+
+	// Use 0700 for log directory - only owner can access
+	if err := os.MkdirAll(c.LogDir, 0700); err != nil {
 		return nil
 	}
 
@@ -370,12 +382,57 @@ func (c *Caller) createLogFile() *os.File {
 	filename := fmt.Sprintf("agent-%s.log", timestamp)
 	path := filepath.Join(c.LogDir, filename)
 
-	file, err := os.Create(path)
+	// Use 0600 for log file - only owner can read/write
+	file, err := os.OpenFile(path, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0600)
 	if err != nil {
 		return nil
 	}
 
 	return file
+}
+
+// sensitivePatterns contains regex patterns for sensitive information
+var sensitivePatterns = []string{
+	// API keys and tokens
+	`(?i)(api[_-]?key|apikey|api_secret|secret[_-]?key)\s*[:=]\s*['"]?[a-zA-Z0-9_\-]{16,}['"]?`,
+	`(?i)(access[_-]?token|auth[_-]?token|bearer)\s*[:=]\s*['"]?[a-zA-Z0-9_\-\.]{20,}['"]?`,
+	// AWS credentials
+	`(?i)(aws[_-]?access[_-]?key[_-]?id|aws[_-]?secret)\s*[:=]\s*['"]?[A-Z0-9]{16,}['"]?`,
+	`AKIA[0-9A-Z]{16}`,
+	// Password patterns
+	`(?i)(password|passwd|pwd)\s*[:=]\s*['"]?[^\s'"]{4,}['"]?`,
+	// Private keys
+	`-----BEGIN\s+(RSA\s+)?PRIVATE\s+KEY-----`,
+	// GitHub tokens
+	`gh[pousr]_[A-Za-z0-9_]{36,}`,
+	// Generic secrets
+	`(?i)(client[_-]?secret|secret)\s*[:=]\s*['"]?[a-zA-Z0-9_\-]{16,}['"]?`,
+}
+
+// compiledPatterns holds compiled regex patterns (initialized lazily)
+var compiledPatterns []*regexp.Regexp
+var patternsOnce sync.Once
+
+// getCompiledPatterns returns compiled regex patterns, initializing them once
+func getCompiledPatterns() []*regexp.Regexp {
+	patternsOnce.Do(func() {
+		compiledPatterns = make([]*regexp.Regexp, 0, len(sensitivePatterns))
+		for _, pattern := range sensitivePatterns {
+			if re, err := regexp.Compile(pattern); err == nil {
+				compiledPatterns = append(compiledPatterns, re)
+			}
+		}
+	})
+	return compiledPatterns
+}
+
+// sanitizeSensitiveData removes or masks sensitive information from text
+func sanitizeSensitiveData(text string) string {
+	result := text
+	for _, re := range getCompiledPatterns() {
+		result = re.ReplaceAllString(result, "[REDACTED]")
+	}
+	return result
 }
 
 // logCommand logs the command being executed
@@ -415,7 +472,7 @@ func (c *Caller) logResult(file *os.File, result *Result, err error) {
 func (c *Caller) logDryRun(prompt string, opts *callOptions) {
 	ui.PrintWarning(c.writer, "[DRY RUN] 跳過實際 agent 呼叫")
 	if c.Verbose {
-		ui.PrintInfo(c.writer, fmt.Sprintf("Prompt: %s...", truncate(prompt, 200)))
+		ui.PrintInfo(c.writer, fmt.Sprintf("Prompt: %s", ui.Truncate(prompt, 200)))
 		if len(opts.contextFiles) > 0 {
 			ui.PrintInfo(c.writer, fmt.Sprintf("Context: %v", opts.contextFiles))
 		}
@@ -450,16 +507,3 @@ func (c *Caller) CallForJSON(ctx context.Context, prompt string, outputFile stri
 	return result, jsonData, nil
 }
 
-func truncate(s string, maxLen int) string {
-	if len(s) <= maxLen {
-		return s
-	}
-	return s[:maxLen] + "..."
-}
-
-func min(a, b int) int {
-	if a < b {
-		return a
-	}
-	return b
-}

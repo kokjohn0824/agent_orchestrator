@@ -9,6 +9,7 @@ import (
 	"syscall"
 
 	"github.com/anthropic/agent-orchestrator/internal/agent"
+	"github.com/anthropic/agent-orchestrator/internal/i18n"
 	"github.com/anthropic/agent-orchestrator/internal/ticket"
 	"github.com/anthropic/agent-orchestrator/internal/ui"
 	"github.com/spf13/cobra"
@@ -20,18 +21,13 @@ var (
 
 var workCmd = &cobra.Command{
 	Use:   "work [ticket-id]",
-	Short: "處理 pending tickets",
-	Long: `處理所有 pending 狀態的 tickets，或指定單一 ticket 處理。
-
-範例:
-  agent-orchestrator work              # 處理所有 pending tickets
-  agent-orchestrator work TICKET-001   # 處理指定 ticket
-  agent-orchestrator work -p 5         # 使用 5 個並行 agents`,
-	RunE: runWork,
+	Short: i18n.CmdWorkShort,
+	Long:  i18n.CmdWorkLong,
+	RunE:  runWork,
 }
 
 func init() {
-	workCmd.Flags().IntVarP(&workParallel, "parallel", "p", 0, "最大並行 agents 數量 (預設使用設定值)")
+	workCmd.Flags().IntVarP(&workParallel, "parallel", "p", 0, i18n.FlagParallel)
 }
 
 func runWork(cmd *cobra.Command, args []string) error {
@@ -43,7 +39,7 @@ func runWork(cmd *cobra.Command, args []string) error {
 	signal.Notify(sigChan, syscall.SIGINT, syscall.SIGTERM)
 	go func() {
 		<-sigChan
-		ui.PrintWarning(os.Stdout, "\n收到中斷信號，正在優雅關閉...")
+		ui.PrintWarning(os.Stdout, i18n.MsgInterruptSignal)
 		cancel()
 	}()
 
@@ -56,7 +52,7 @@ func runWork(cmd *cobra.Command, args []string) error {
 	// Initialize store
 	store := ticket.NewStore(cfg.TicketsDir)
 	if err := store.Init(); err != nil {
-		return fmt.Errorf("初始化 ticket store 失敗: %w", err)
+		return fmt.Errorf(i18n.ErrInitStoreFailed, err)
 	}
 
 	// If specific ticket ID provided
@@ -70,18 +66,18 @@ func runWork(cmd *cobra.Command, args []string) error {
 func workSingleTicket(ctx context.Context, store *ticket.Store, ticketID string) error {
 	t, err := store.Load(ticketID)
 	if err != nil {
-		ui.PrintError(os.Stdout, "找不到 ticket: "+ticketID)
+		ui.PrintError(os.Stdout, fmt.Sprintf(i18n.ErrTicketNotFound, ticketID))
 		return nil
 	}
 
 	if t.Status != ticket.StatusPending {
-		ui.PrintWarning(os.Stdout, fmt.Sprintf("Ticket %s 狀態為 %s，無法處理", ticketID, t.Status))
+		ui.PrintWarning(os.Stdout, fmt.Sprintf(i18n.MsgTicketCannotProcess, ticketID, t.Status))
 		return nil
 	}
 
-	ui.PrintHeader(os.Stdout, "處理 Ticket")
-	ui.PrintInfo(os.Stdout, fmt.Sprintf("ID: %s", t.ID))
-	ui.PrintInfo(os.Stdout, fmt.Sprintf("標題: %s", t.Title))
+	ui.PrintHeader(os.Stdout, i18n.UIProcessTicket)
+	ui.PrintInfo(os.Stdout, fmt.Sprintf(i18n.MsgTicketInfo, t.ID))
+	ui.PrintInfo(os.Stdout, fmt.Sprintf(i18n.MsgTicketTitle, t.Title))
 
 	return processTicket(ctx, store, t)
 }
@@ -89,11 +85,11 @@ func workSingleTicket(ctx context.Context, store *ticket.Store, ticketID string)
 func workAllTickets(ctx context.Context, store *ticket.Store, parallel int) error {
 	w := os.Stdout
 
-	ui.PrintHeader(w, "處理 Tickets")
-	ui.PrintInfo(w, fmt.Sprintf("最大並行數: %d", parallel))
+	ui.PrintHeader(w, i18n.UIProcessTickets)
+	ui.PrintInfo(w, fmt.Sprintf(i18n.MsgMaxParallel, parallel))
 
 	resolver := ticket.NewDependencyResolver(store)
-	
+
 	results := struct {
 		completed int
 		failed    int
@@ -106,7 +102,7 @@ func workAllTickets(ctx context.Context, store *ticket.Store, parallel int) erro
 		// Check for cancellation
 		select {
 		case <-ctx.Done():
-			ui.PrintWarning(w, "處理已中斷")
+			ui.PrintWarning(w, i18n.MsgProcessInterrupted)
 			goto done
 		default:
 		}
@@ -121,13 +117,24 @@ func workAllTickets(ctx context.Context, store *ticket.Store, parallel int) erro
 			// Check if there are still pending tickets (blocked by dependencies)
 			pending, _ := store.LoadByStatus(ticket.StatusPending)
 			if len(pending) > 0 {
-				ui.PrintWarning(w, fmt.Sprintf("還有 %d 個 tickets 但依賴未滿足", len(pending)))
+				ui.PrintWarning(w, fmt.Sprintf(i18n.MsgPendingBlocked, len(pending)))
 				results.skipped = len(pending)
 			}
 			break
 		}
 
-		ui.PrintInfo(w, fmt.Sprintf("迭代 %d: 處理 %d 個 tickets", iteration+1, len(processable)))
+		ui.PrintInfo(w, fmt.Sprintf(i18n.MsgIteration, iteration+1, len(processable)))
+
+		// Create multi-spinner for this batch
+		multiSpinner := ui.NewMultiSpinner(w)
+
+		// Add all tasks to the multi-spinner first
+		for _, t := range processable {
+			multiSpinner.AddTask(t.ID, fmt.Sprintf(i18n.SpinnerProcessing, t.ID, t.Title))
+		}
+
+		// Start the multi-spinner
+		multiSpinner.Start()
 
 		// Process tickets in parallel
 		var wg sync.WaitGroup
@@ -147,8 +154,8 @@ func workAllTickets(ctx context.Context, store *ticket.Store, parallel int) erro
 				semaphore <- struct{}{}
 				defer func() { <-semaphore }()
 
-				err := processTicket(ctx, store, t)
-				
+				err := processTicketWithMultiSpinner(ctx, store, t, multiSpinner)
+
 				results.mu.Lock()
 				if err != nil {
 					results.failed++
@@ -160,18 +167,21 @@ func workAllTickets(ctx context.Context, store *ticket.Store, parallel int) erro
 		}
 
 		wg.Wait()
+
+		// Stop the multi-spinner after all tasks in this batch are done
+		multiSpinner.Stop()
 	}
 
 done:
 	// Print summary
 	ui.PrintInfo(w, "")
-	ui.PrintHeader(w, "處理完成")
-	ui.PrintSuccess(w, fmt.Sprintf("完成: %d", results.completed))
+	ui.PrintHeader(w, i18n.UIProcessComplete)
+	ui.PrintSuccess(w, fmt.Sprintf(i18n.MsgCountCompleted, results.completed))
 	if results.failed > 0 {
-		ui.PrintError(w, fmt.Sprintf("失敗: %d", results.failed))
+		ui.PrintError(w, fmt.Sprintf(i18n.MsgCountFailed, results.failed))
 	}
 	if results.skipped > 0 {
-		ui.PrintWarning(w, fmt.Sprintf("跳過: %d", results.skipped))
+		ui.PrintWarning(w, fmt.Sprintf(i18n.MsgCountSkipped, results.skipped))
 	}
 
 	return nil
@@ -187,17 +197,9 @@ func processTicket(ctx context.Context, store *ticket.Store, t *ticket.Ticket) e
 	}
 
 	// Create coding agent
-	caller := agent.NewCaller(
-		cfg.AgentCommand,
-		cfg.AgentForce,
-		cfg.AgentOutputFormat,
-		cfg.LogsDir,
-	)
-	caller.SetDryRun(cfg.DryRun)
-	caller.SetVerbose(cfg.Verbose)
-
-	if !caller.IsAvailable() && !cfg.DryRun {
-		ui.PrintError(w, "找不到 agent 指令")
+	caller, err := CreateAgentCaller()
+	if err != nil {
+		ui.PrintError(w, i18n.ErrAgentCommand)
 		t.MarkFailed(fmt.Errorf("agent command not found"))
 		store.Save(t)
 		return fmt.Errorf("agent not available")
@@ -206,32 +208,78 @@ func processTicket(ctx context.Context, store *ticket.Store, t *ticket.Ticket) e
 	codingAgent := agent.NewCodingAgent(caller, cfg.ProjectRoot)
 
 	// Execute
-	spinner := ui.NewSpinner(fmt.Sprintf("處理 %s: %s", t.ID, t.Title), w)
+	spinner := ui.NewSpinner(fmt.Sprintf(i18n.SpinnerProcessing, t.ID, t.Title), w)
 	spinner.Start()
 
 	result, err := codingAgent.Execute(ctx, t)
-	
+
 	if err != nil || !result.Success {
-		spinner.Fail(fmt.Sprintf("%s 失敗", t.ID))
+		spinner.Fail(fmt.Sprintf(i18n.SpinnerFailTicket, t.ID))
 		errMsg := "execution failed"
 		if err != nil {
 			errMsg = err.Error()
 		} else if result.Error != "" {
 			errMsg = result.Error
 		}
-		t.MarkFailed(fmt.Errorf(errMsg))
+		t.MarkFailed(fmt.Errorf("%s", errMsg))
 		store.Save(t)
 		return fmt.Errorf("ticket %s failed: %s", t.ID, errMsg)
 	}
 
-	spinner.Success(fmt.Sprintf("%s 完成", t.ID))
-	
+	spinner.Success(fmt.Sprintf(i18n.MsgProcessingComplete, t.ID))
+
 	// Truncate output if too long
 	output := result.Output
 	if len(output) > 1000 {
 		output = output[:1000] + "...(truncated)"
 	}
-	
+
+	t.MarkCompleted(output)
+	return store.Save(t)
+}
+
+func processTicketWithMultiSpinner(ctx context.Context, store *ticket.Store, t *ticket.Ticket, multiSpinner *ui.MultiSpinner) error {
+	// Mark as in progress
+	t.MarkInProgress()
+	if err := store.Save(t); err != nil {
+		return err
+	}
+
+	// Create coding agent
+	caller, err := CreateAgentCaller()
+	if err != nil {
+		multiSpinner.FailTask(t.ID, fmt.Sprintf(i18n.SpinnerFailTicket, t.ID))
+		t.MarkFailed(fmt.Errorf("agent command not found"))
+		store.Save(t)
+		return fmt.Errorf("agent not available")
+	}
+
+	codingAgent := agent.NewCodingAgent(caller, cfg.ProjectRoot)
+
+	// Execute
+	result, err := codingAgent.Execute(ctx, t)
+
+	if err != nil || !result.Success {
+		multiSpinner.FailTask(t.ID, fmt.Sprintf(i18n.SpinnerFailTicket, t.ID))
+		errMsg := "execution failed"
+		if err != nil {
+			errMsg = err.Error()
+		} else if result.Error != "" {
+			errMsg = result.Error
+		}
+		t.MarkFailed(fmt.Errorf("%s", errMsg))
+		store.Save(t)
+		return fmt.Errorf("ticket %s failed: %s", t.ID, errMsg)
+	}
+
+	multiSpinner.CompleteTask(t.ID, fmt.Sprintf(i18n.MsgProcessingComplete, t.ID))
+
+	// Truncate output if too long
+	output := result.Output
+	if len(output) > 1000 {
+		output = output[:1000] + "...(truncated)"
+	}
+
 	t.MarkCompleted(output)
 	return store.Save(t)
 }
