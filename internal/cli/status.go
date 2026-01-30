@@ -40,6 +40,7 @@ func runStatus(cmd *cobra.Command, args []string) error {
 		ui.PrintInfo(w, i18n.MsgGettingStartedInit)
 		ui.PrintInfo(w, i18n.MsgGettingStartedPlan)
 		ui.PrintInfo(w, i18n.MsgGettingStartedAnalyze)
+		ui.PrintInfo(w, i18n.MsgGettingStartedAdd)
 		return nil
 	}
 

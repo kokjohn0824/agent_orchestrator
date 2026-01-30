@@ -379,6 +379,7 @@ const (
 	MsgGettingStartedInit    = "  agent-orchestrator init \"專案目標\"   # 互動式初始化"
 	MsgGettingStartedPlan    = "  agent-orchestrator plan <milestone>  # 從 milestone 產生 tickets"
 	MsgGettingStartedAnalyze = "  agent-orchestrator analyze           # 分析現有專案"
+	MsgGettingStartedAdd     = "  agent-orchestrator add               # 直接新增 ticket"
 
 	// Analysis categories
 	CategoryPerformance = "效能問題"
