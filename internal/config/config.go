@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
+	"time"
 
 	"github.com/spf13/viper"
 )
@@ -40,6 +42,12 @@ type Config struct {
 
 	// LogsDir 為 agent 執行日誌目錄；日誌可能含 prompt/輸出內容。預設 ".agent-logs"。
 	LogsDir string `mapstructure:"logs_dir"`
+
+	// WorkDetachLogDir 為 work detach 模式之日誌目錄；未設時不使用。可設為相對路徑，會依 ProjectRoot 解析。
+	WorkDetachLogDir string `mapstructure:"work_detach_log_dir"`
+
+	// WorkPIDFile 為 work 背景執行時 PID 檔路徑；未設時約定為 TicketsDir/.work.pid。
+	WorkPIDFile string `mapstructure:"work_pid_file"`
 
 	// DocsDir 為文件（如 milestone）輸出目錄。預設 "docs"。
 	DocsDir string `mapstructure:"docs_dir"`
@@ -89,6 +97,8 @@ func DefaultConfig() *Config {
 		ProjectRoot:        cwd,
 		TicketsDir:         ".tickets",
 		LogsDir:            ".agent-logs",
+		WorkDetachLogDir:   "",
+		WorkPIDFile:        "",
 		DocsDir:            "docs",
 		MaxParallel:        3,
 		DryRun:             false,
@@ -129,6 +139,8 @@ func Load() (*Config, error) {
 	v.SetDefault("agent_timeout", cfg.AgentTimeout)
 	v.SetDefault("tickets_dir", cfg.TicketsDir)
 	v.SetDefault("logs_dir", cfg.LogsDir)
+	v.SetDefault("work_detach_log_dir", cfg.WorkDetachLogDir)
+	v.SetDefault("work_pid_file", cfg.WorkPIDFile)
 	v.SetDefault("docs_dir", cfg.DocsDir)
 	v.SetDefault("max_parallel", cfg.MaxParallel)
 	v.SetDefault("disable_detailed_log", cfg.DisableDetailedLog)
@@ -166,6 +178,14 @@ func (c *Config) resolvePaths() {
 		c.LogsDir = filepath.Join(c.ProjectRoot, c.LogsDir)
 	}
 
+	if c.WorkDetachLogDir != "" && !filepath.IsAbs(c.WorkDetachLogDir) {
+		c.WorkDetachLogDir = filepath.Join(c.ProjectRoot, c.WorkDetachLogDir)
+	}
+
+	if c.WorkPIDFile != "" && !filepath.IsAbs(c.WorkPIDFile) {
+		c.WorkPIDFile = filepath.Join(c.ProjectRoot, c.WorkPIDFile)
+	}
+
 	if !filepath.IsAbs(c.DocsDir) {
 		c.DocsDir = filepath.Join(c.ProjectRoot, c.DocsDir)
 	}
@@ -188,6 +208,8 @@ func (c *Config) Save(path string) error {
 	v.Set("agent_timeout", c.AgentTimeout)
 	v.Set("tickets_dir", c.TicketsDir)
 	v.Set("logs_dir", c.LogsDir)
+	v.Set("work_detach_log_dir", c.WorkDetachLogDir)
+	v.Set("work_pid_file", c.WorkPIDFile)
 	v.Set("docs_dir", c.DocsDir)
 	v.Set("max_parallel", c.MaxParallel)
 	v.Set("disable_detailed_log", c.DisableDetailedLog)
@@ -219,7 +241,41 @@ func (c *Config) Validate() error {
 		return fmt.Errorf("invalid agent_output_format: %s", c.AgentOutputFormat)
 	}
 
+	// 可選：當 WorkDetachLogDir 有值時檢查路徑格式（不含 null 等無效字元）
+	if c.WorkDetachLogDir != "" && strings.Contains(c.WorkDetachLogDir, "\x00") {
+		return fmt.Errorf("work_detach_log_dir contains invalid character")
+	}
+
 	return nil
+}
+
+// WorkPIDFilePath 回傳 work 背景執行時使用的 PID 檔路徑。
+// 若 WorkPIDFile 已設定則回傳該路徑，否則約定為 TicketsDir/.work.pid。
+func (c *Config) WorkPIDFilePath() string {
+	if c.WorkPIDFile != "" {
+		return c.WorkPIDFile
+	}
+	return filepath.Join(c.TicketsDir, ".work.pid")
+}
+
+// DetachLogPath 回傳當次 detach 執行的 log 檔路徑。
+// 依 config（WorkDetachLogDir 或 LogsDir）與可選的 --log-file 覆寫、時間戳決定：
+//   - 若 logFileOverride 非空（對應 --log-file），則以此路徑為準；相對路徑會依 ProjectRoot 解析為絕對路徑。
+//   - 否則使用 WorkDetachLogDir（有設定時）或 LogsDir 作為目錄，檔名為 work-YYYYMMDD-HHMMSS.log（由 timestamp 決定）。
+// 供 Phase 2 work detach 寫入日誌使用。
+func (c *Config) DetachLogPath(logFileOverride string, timestamp time.Time) string {
+	if logFileOverride != "" {
+		if filepath.IsAbs(logFileOverride) {
+			return logFileOverride
+		}
+		return filepath.Join(c.ProjectRoot, logFileOverride)
+	}
+	dir := c.LogsDir
+	if c.WorkDetachLogDir != "" {
+		dir = c.WorkDetachLogDir
+	}
+	name := "work-" + timestamp.Format("20060102-150405") + ".log"
+	return filepath.Join(dir, name)
 }
 
 // EnsureDirs creates necessary directories
@@ -294,6 +350,8 @@ agent_timeout: 600             # Agent 執行超時秒數 (預設: 600)
 # 路徑設定 (相對於專案根目錄)
 tickets_dir: .tickets          # Tickets 儲存目錄 (預設: .tickets)
 logs_dir: .agent-logs          # Agent 執行日誌目錄 (預設: .agent-logs)
+# work_detach_log_dir:          # work detach 日誌目錄，未設則不使用 (選填)
+# work_pid_file:               # work 背景 PID 檔路徑，未設則為 tickets_dir/.work.pid (選填)
 docs_dir: docs                 # 文件目錄 (預設: docs)
 
 # 執行設定
