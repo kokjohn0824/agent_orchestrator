@@ -12,17 +12,39 @@
 
 ## 安裝
 
+### 一鍵安裝 (curl)
+
+支援 macOS 與 Linux（amd64 / arm64）。預設安裝至 `~/bin`，請確保已加入 PATH。
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/kokjohn0824/agent_orchestrator/main/scripts/install.sh | sh
+```
+
+- 安裝到系統目錄（需寫入權限）：`PREFIX=/usr/local curl -fsSL ... | sh`（二進位會安裝到 `/usr/local/bin`）
+- 指定其他 repo：`AGENT_ORCHESTRATOR_REPO=owner/repo curl -fsSL ... | sh`
+
+### Homebrew (tap)
+
+若已安裝 Homebrew，可從本 repo 的 Formula 安裝：
+
+```bash
+brew tap kokjohn0824/agent_orchestrator https://github.com/kokjohn0824/agent_orchestrator
+brew install agent-orchestrator
+```
+
+首次發布 Release 後，需更新 `Formula/agent-orchestrator.rb` 中的 `version` 與各平台的 `sha256`（對下載的二進位執行 `shasum -a 256` 取得）。
+
 ### 從原始碼建置
 
 ```bash
 # Clone 專案 (請替換為實際的 repository URL)
-# git clone https://github.com/YOUR_ORG/agent-orchestrator.git
-# cd agent-orchestrator
+# git clone https://github.com/kokjohn0824/agent_orchestrator.git
+# cd agent_orchestrator
 
 # 或從本地目錄建置
 make build
 
-# 安裝到 GOPATH/bin
+# 安裝到 ~/bin
 make install
 ```
 

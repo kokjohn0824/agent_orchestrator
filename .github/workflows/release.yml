@@ -1,0 +1,59 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+
+      - name: Run tests
+        run: go test ./...
+
+      - name: Set version
+        id: version
+        run: |
+          VERSION="${GITHUB_REF#refs/tags/}"
+          BUILD_DATE=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "build_date=$BUILD_DATE" >> "$GITHUB_OUTPUT"
+          echo "Version: $VERSION"
+
+      - name: Build binaries
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+          COMMIT: ${{ github.sha }}
+          BUILD_DATE: ${{ steps.version.outputs.build_date }}
+        run: |
+          LDFLAGS="-X github.com/anthropic/agent-orchestrator/internal/cli.Version=${VERSION} \
+            -X github.com/anthropic/agent-orchestrator/internal/cli.Commit=${COMMIT:0:7} \
+            -X github.com/anthropic/agent-orchestrator/internal/cli.BuildDate=${BUILD_DATE}"
+          mkdir -p build
+          GOOS=darwin GOARCH=amd64 go build -ldflags "$LDFLAGS" -o build/agent-orchestrator-darwin-amd64 ./cmd/agent-orchestrator
+          GOOS=darwin GOARCH=arm64 go build -ldflags "$LDFLAGS" -o build/agent-orchestrator-darwin-arm64 ./cmd/agent-orchestrator
+          GOOS=linux GOARCH=amd64 go build -ldflags "$LDFLAGS" -o build/agent-orchestrator-linux-amd64 ./cmd/agent-orchestrator
+          GOOS=linux GOARCH=arm64 go build -ldflags "$LDFLAGS" -o build/agent-orchestrator-linux-arm64 ./cmd/agent-orchestrator
+          ls -la build/
+
+      - name: Create Release and upload assets
+        uses: softprops/action-gh-release@v2
+        with:
+          files: build/agent-orchestrator-*
+          generate_release_notes: true
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
