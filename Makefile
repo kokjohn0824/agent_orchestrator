@@ -21,6 +21,7 @@ GOFMT := gofmt
 # Directories
 BUILD_DIR := ./build
 DIST_DIR := ./dist
+INSTALL_DIR := $(HOME)/bin
 
 .PHONY: all build clean test lint fmt help install uninstall
 
@@ -44,15 +45,28 @@ build-all: ## Build for all platforms
 	GOOS=windows GOARCH=amd64 $(GOBUILD) $(LDFLAGS) -o $(DIST_DIR)/$(BINARY_NAME)-windows-amd64.exe $(MAIN_PATH)
 	@echo "Built binaries in $(DIST_DIR)/"
 
-install: build ## Install the binary to ~/bin
-	@echo "Installing $(BINARY_NAME)..."
-	@mkdir -p $(HOME)/bin
-	cp $(BUILD_DIR)/$(BINARY_NAME) $(HOME)/bin/$(BINARY_NAME)
-	@echo "Installed to $(HOME)/bin/$(BINARY_NAME)"
+install: build ## Install the binary to INSTALL_DIR (default: ~/bin)
+	@echo ""
+	@echo "\033[36m╔══════════════════════════════════════════════════════════════╗\033[0m"
+	@echo "\033[36m║\033[0m  \033[1mInstalling $(BINARY_NAME)\033[0m                                    \033[36m║\033[0m"
+	@echo "\033[36m╚══════════════════════════════════════════════════════════════╝\033[0m"
+	@echo ""
+	@echo "  \033[33m→\033[0m Creating install directory: \033[36m$(INSTALL_DIR)\033[0m"
+	@mkdir -p $(INSTALL_DIR)
+	@echo "  \033[33m→\033[0m Copying binary..."
+	@cp $(BUILD_DIR)/$(BINARY_NAME) $(INSTALL_DIR)/$(BINARY_NAME)
+	@echo ""
+	@echo "\033[32m  ✓ Installed successfully!\033[0m"
+	@echo ""
+	@echo "  \033[1mInstall location:\033[0m  $(INSTALL_DIR)/$(BINARY_NAME)"
+	@echo "  \033[1mVersion:\033[0m          $(VERSION)"
+	@echo ""
+	@echo "  Ensure \033[36m$(INSTALL_DIR)\033[0m is in your PATH to use the command."
+	@echo ""
 
-uninstall: ## Remove the binary from ~/bin
+uninstall: ## Remove the binary from INSTALL_DIR (default: ~/bin)
 	@echo "Uninstalling $(BINARY_NAME)..."
-	rm -f $(HOME)/bin/$(BINARY_NAME)
+	rm -f $(INSTALL_DIR)/$(BINARY_NAME)
 	@echo "Uninstalled"
 
 ## Development targets
