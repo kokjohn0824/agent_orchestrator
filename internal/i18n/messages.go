@@ -187,14 +187,17 @@ const (
 	FlagQuiet        = "安靜模式，只顯示錯誤"
 	FlagOutput       = "Agent 輸出格式: text, json, stream-json"
 	FlagParallel     = "最大並行 agents 數量 (預設使用設定值)"
+	FlagDetach       = "背景執行 work，不佔用當前 terminal"
+	FlagLogFile      = "detach 子 process 的 log 檔路徑 (預設依設定與時間戳)"
 	FlagScope        = "分析範圍: all, performance, refactor, security, test, docs (可用逗號分隔多個)"
 	FlagAuto         = "自動產生 tickets 不詢問"
 	FlagCommitAll    = "批次提交所有 completed tickets"
 	FlagAnalyzeFirst = "先執行 analyze 分析現有專案"
 	FlagSkipTest     = "跳過測試步驟"
 	FlagSkipReview   = "跳過審查步驟"
-	FlagSkipCommit   = "跳過提交步驟"
-	FlagForce        = "不詢問直接執行"
+	FlagSkipCommit      = "跳過提交步驟"
+	FlagDetachAfterPlan = "Planning 完成後改為啟動背景 work 並立即返回"
+	FlagForce           = "不詢問直接執行"
 
 	// Add/Edit ticket flags
 	FlagTitle       = "Ticket 標題"
@@ -336,6 +339,18 @@ const (
 	MsgCurrentStatus       = "目前狀態:"
 	MsgInterruptSignal     = "\n收到中斷信號，正在優雅關閉..."
 
+	// Detach / background work / log path
+	MsgDetached              = "已分離"
+	MsgDetachedPid           = "已分離。PID: %d"
+	MsgDetachedPidLog        = "已分離。PID: %d，日誌: %s"
+	// run --detach-after-plan: Coding detached with PID/log and next-steps hint
+	MsgRunDetachCodingDetached    = "Coding 已分離。PID: %d，日誌: %s。"
+	MsgRunDetachCodingDetachedNoLog = "Coding 已分離。PID: %d。"
+	MsgRunDetachHintNextSteps     = "可稍後執行 test、review、commit。"
+	MsgBackgroundWorkRunning = "背景工作執行中"
+	MsgBackgroundWorkRunningPid = "背景工作: 執行中 (PID %d)"
+	MsgLogPath               = "日誌路徑: %s"
+
 	// Error messages
 	ErrAgentNotFound        = "找不到 agent 指令，請確保已安裝 Cursor CLI"
 	ErrAgentCommand         = "找不到 agent 指令"
@@ -348,6 +363,8 @@ const (
 	ErrCleanTicketsFailed   = "清除 tickets 失敗: %s"
 	ErrCleanLogsFailed      = "清除 logs 失敗: %s"
 	ErrGenerateConfigFailed = "產生設定檔失敗: %s"
+	// ErrBackgroundWorkRunning 當背景 work (detach) 執行中時，禁止會寫入 store 的指令
+	ErrBackgroundWorkRunning = "背景 work 執行中 (PID %d)，無法執行會寫入 store 的指令。請稍後再試或先停止背景 work。"
 
 	// Spinner fail messages
 	SpinnerFailQuestions   = "產生問題失敗"

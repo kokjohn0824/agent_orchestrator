@@ -10,42 +10,55 @@ import (
 	"strings"
 )
 
+// parsePorcelainLinePath extracts the file path from a "git status --porcelain"
+// line. For rename lines ("R  old -> new") it returns the new path. Returns
+// empty string for malformed lines.
+func parsePorcelainLinePath(line string) string {
+	// Do not trim the whole line: porcelain is "XY path" and we need line[2] == ' '
+	if line == "" || len(line) <= 3 || line[2] != ' ' {
+		return ""
+	}
+	s := strings.TrimSpace(line[3:])
+	if s == "" {
+		return ""
+	}
+	if idx := strings.Index(s, " -> "); idx >= 0 {
+		return strings.TrimSpace(s[idx+4:])
+	}
+	return s
+}
+
 // getGitChangedFiles returns the list of file paths that have been modified
-// in the working tree (compared to HEAD), or nil if the project root is invalid
-// or the git command fails. Used by run and review commands.
+// in the working tree (staged, unstaged, and untracked), or nil if the project
+// root is invalid or the git command fails. Used by run, review, and commit.
 func getGitChangedFiles(ctx context.Context) []string {
 	if err := validateProjectRoot(cfg.ProjectRoot); err != nil {
 		return nil
 	}
 
-	cmd := exec.CommandContext(ctx, "git", "diff", "--name-only", "HEAD")
+	cmd := exec.CommandContext(ctx, "git", "status", "--porcelain")
 	cmd.Dir = cfg.ProjectRoot
 	output, err := cmd.Output()
 	if err != nil {
 		if ctx.Err() != nil {
 			return nil
 		}
-		cmd = exec.CommandContext(ctx, "git", "status", "--porcelain")
-		cmd.Dir = cfg.ProjectRoot
-		output, err = cmd.Output()
-		if err != nil {
-			return nil
-		}
+		return nil
 	}
 
-	lines := strings.Split(strings.TrimSpace(string(output)), "\n")
-	files := make([]string, 0)
-	for _, line := range lines {
-		line = strings.TrimSpace(line)
-		if line == "" {
+	seen := make(map[string]struct{})
+	var files []string
+	for _, line := range strings.Split(strings.TrimSpace(string(output)), "\n") {
+		path := parsePorcelainLinePath(line)
+		if path == "" {
 			continue
 		}
-		if len(line) > 3 && line[2] == ' ' {
-			line = strings.TrimSpace(line[3:])
+		if _, ok := seen[path]; ok {
+			continue
 		}
-		files = append(files, line)
+		seen[path] = struct{}{}
+		files = append(files, path)
 	}
-
 	return files
 }
 
@@ -66,18 +79,12 @@ func getGitStatusForFiles(ctx context.Context, files []string) string {
 	}
 	var out []string
 	for _, line := range strings.Split(full, "\n") {
-		line = strings.TrimSpace(line)
-		if line == "" {
+		path := parsePorcelainLinePath(line)
+		if path == "" {
 			continue
 		}
-		var path string
-		if len(line) > 3 && line[2] == ' ' {
-			path = strings.TrimSpace(line[3:])
-		} else {
-			path = line
-		}
 		if _, ok := filesSet[path]; ok {
-			out = append(out, line)
+			out = append(out, strings.TrimSpace(line))
 		}
 	}
 	return strings.TrimSpace(strings.Join(out, "\n"))

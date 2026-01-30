@@ -18,10 +18,11 @@ import (
 // Note: agent import is still needed for NewPlanningAgent, NewCodingAgent, etc.
 
 var (
-	runAnalyzeFirst bool
-	runSkipTest     bool
-	runSkipReview   bool
-	runSkipCommit   bool
+	runAnalyzeFirst    bool
+	runSkipTest        bool
+	runSkipReview      bool
+	runSkipCommit      bool
+	runDetachAfterPlan bool
 )
 
 var runCmd = &cobra.Command{
@@ -37,9 +38,15 @@ func init() {
 	runCmd.Flags().BoolVar(&runSkipTest, "skip-test", false, i18n.FlagSkipTest)
 	runCmd.Flags().BoolVar(&runSkipReview, "skip-review", false, i18n.FlagSkipReview)
 	runCmd.Flags().BoolVar(&runSkipCommit, "skip-commit", false, i18n.FlagSkipCommit)
+	runCmd.Flags().BoolVar(&runDetachAfterPlan, "detach-after-plan", false, i18n.FlagDetachAfterPlan)
 }
 
 func runPipeline(cmd *cobra.Command, args []string) error {
+	// Refuse to write if background work is running (TICKET-018).
+	if err := ErrIfBackgroundWorkRunning(); err != nil {
+		return err
+	}
+
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
@@ -135,6 +142,25 @@ func runPipeline(cmd *cobra.Command, args []string) error {
 		ui.PrintWarning(w, i18n.MsgPipelineInterrupted)
 		return nil
 	default:
+	}
+
+	// If --detach-after-plan: start work in detach mode and return (Step 2+ run in background).
+	if runDetachAfterPlan {
+		params, err := buildWorkDetachParams(nil)
+		if err != nil {
+			return err
+		}
+		pid, err := execWorkDetach(params)
+		if err != nil {
+			return err
+		}
+		if params.LogPath != "" {
+			ui.PrintSuccess(w, fmt.Sprintf(i18n.MsgRunDetachCodingDetached, pid, params.LogPath))
+		} else {
+			ui.PrintSuccess(w, fmt.Sprintf(i18n.MsgRunDetachCodingDetachedNoLog, pid))
+		}
+		ui.PrintInfo(w, i18n.MsgRunDetachHintNextSteps)
+		return nil
 	}
 
 	// Step 2: Coding

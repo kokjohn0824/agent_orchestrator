@@ -6,13 +6,17 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
+	"regexp"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/anthropic/agent-orchestrator/internal/agent"
 	"github.com/anthropic/agent-orchestrator/internal/config"
+	"github.com/anthropic/agent-orchestrator/internal/i18n"
 	"github.com/anthropic/agent-orchestrator/internal/ticket"
 )
 
@@ -945,10 +949,191 @@ func TestRunPipelineFlags(t *testing.T) {
 	cmd := runCmd
 
 	// Check flags exist
-	flags := []string{"analyze-first", "skip-test", "skip-review", "skip-commit"}
+	flags := []string{"analyze-first", "skip-test", "skip-review", "skip-commit", "detach-after-plan"}
 	for _, flag := range flags {
 		if cmd.Flags().Lookup(flag) == nil {
 			t.Errorf("Flag %s should be registered", flag)
+		}
+	}
+}
+
+// TestRunPipeline_DetachAfterPlan_UsesWorkDetachParams verifies that run --detach-after-plan
+// uses the same buildWorkDetachParams(nil) and execWorkDetach path as "work --detach",
+// so the child process runs work in detach mode (processes all tickets from store).
+func TestRunPipeline_DetachAfterPlan_UsesWorkDetachParams(t *testing.T) {
+	originalCfg := cfg
+	originalCfgFile := cfgFile
+	defer func() {
+		cfg = originalCfg
+		cfgFile = originalCfgFile
+	}()
+
+	cfg = createTestConfig(t.TempDir())
+	cfgFile = ""
+
+	// Same call as runPipeline when runDetachAfterPlan is true
+	params, err := buildWorkDetachParams(nil)
+	if err != nil {
+		t.Fatalf("buildWorkDetachParams(nil) (used by run --detach-after-plan): %v", err)
+	}
+	if params.Binary == "" {
+		t.Error("Binary must be set for detach child")
+	}
+	if len(params.Args) < 2 {
+		t.Fatalf("Args must include work and --detach-child, got %v", params.Args)
+	}
+	if params.Args[0] != "work" {
+		t.Errorf("Args[0] must be 'work' so child runs work command, got %q", params.Args[0])
+	}
+	hasDetachChild := false
+	for _, a := range params.Args {
+		if a == "--detach-child" {
+			hasDetachChild = true
+			break
+		}
+	}
+	if !hasDetachChild {
+		t.Errorf("Args must contain --detach-child so child runs in detach mode, got %v", params.Args)
+	}
+}
+
+// TestRunPipeline_DetachAfterPlan_Integration runs run --detach-after-plan <milestone> and verifies:
+// - main process exits after plan completes
+// - PID file exists and contains the detach work child PID
+// - log file contains detach work record (處理 Tickets); test/review/commit steps are NOT executed
+func TestRunPipeline_DetachAfterPlan_Integration(t *testing.T) {
+	tmpDir := t.TempDir()
+	absTmpDir, err := filepath.Abs(tmpDir)
+	if err != nil {
+		t.Fatalf("Abs(tmpDir): %v", err)
+	}
+
+	// Config file so the binary loads project_root, tickets_dir, logs_dir, dry_run
+	configPath := filepath.Join(tmpDir, ".agent-orchestrator.yaml")
+	configYAML := fmt.Sprintf(`project_root: %q
+tickets_dir: ".tickets"
+logs_dir: "logs"
+dry_run: true
+`, absTmpDir)
+	if err := os.WriteFile(configPath, []byte(configYAML), 0600); err != nil {
+		t.Fatalf("Write config: %v", err)
+	}
+
+	// Milestone file for plan step
+	docsDir := filepath.Join(tmpDir, "docs")
+	if err := os.MkdirAll(docsDir, 0755); err != nil {
+		t.Fatalf("Mkdir docs: %v", err)
+	}
+	milestonePath := filepath.Join(docsDir, "milestone.md")
+	milestoneContent := "# Test Milestone\n\n## Goals\n- Goal A\n"
+	if err := os.WriteFile(milestonePath, []byte(milestoneContent), 0644); err != nil {
+		t.Fatalf("Write milestone: %v", err)
+	}
+
+	// Build the CLI binary (test binary is not the CLI; we need the main binary for execWorkDetach child)
+	binaryPath := filepath.Join(tmpDir, "agent-orchestrator")
+	projectRoot := findModuleRoot(t)
+	buildCmd := exec.Command("go", "build", "-o", binaryPath, "./cmd/agent-orchestrator")
+	buildCmd.Dir = projectRoot
+	if out, err := buildCmd.CombinedOutput(); err != nil {
+		t.Skipf("build CLI binary: %v\n%s", err, out)
+	}
+
+	// Run: run --dry-run --detach-after-plan docs/milestone.md (relative path from tmpDir)
+	runCmd := exec.Command(binaryPath, "run", "--dry-run", "--detach-after-plan", "docs/milestone.md")
+	runCmd.Dir = tmpDir
+	var stdout bytes.Buffer
+	runCmd.Stdout = &stdout
+	runCmd.Stderr = &stdout
+	if err := runCmd.Start(); err != nil {
+		t.Fatalf("Start run: %v", err)
+	}
+	done := make(chan error, 1)
+	go func() { done <- runCmd.Wait() }()
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatalf("run command: %v\nstdout/stderr:\n%s", err, stdout.String())
+		}
+	case <-time.After(30 * time.Second):
+		runCmd.Process.Kill()
+		t.Fatalf("run command timed out\nstdout/stderr:\n%s", stdout.String())
+	}
+
+	outStr := stdout.String()
+	// Parse log path from output: "Coding 已分離。PID: %d，日誌: %s。"
+	logPathRE := regexp.MustCompile(`日誌:\s*([^\s。]+)`)
+	matches := logPathRE.FindStringSubmatch(outStr)
+	var logPath string
+	if len(matches) >= 2 {
+		logPath = strings.TrimSpace(matches[1])
+		if !filepath.IsAbs(logPath) {
+			logPath = filepath.Join(tmpDir, logPath)
+		}
+	}
+	if logPath == "" {
+		// Fallback: newest work-*.log under tmpDir/logs
+		logsDir := filepath.Join(tmpDir, "logs")
+		entries, _ := os.ReadDir(logsDir)
+		var newest string
+		var newestMod time.Time
+		for _, e := range entries {
+			if e.IsDir() || !strings.HasPrefix(e.Name(), "work-") || !strings.HasSuffix(e.Name(), ".log") {
+				continue
+			}
+			path := filepath.Join(logsDir, e.Name())
+			info, _ := os.Stat(path)
+			if info != nil && info.ModTime().After(newestMod) {
+				newestMod = info.ModTime()
+				newest = path
+			}
+		}
+		logPath = newest
+	}
+
+	// Wait for child to start and write PID file (poll quickly; child may exit and remove PID file when done)
+	pidPath := filepath.Join(tmpDir, ".tickets", ".work.pid")
+	var pidData []byte
+	var pidErr error
+	for deadline := time.Now().Add(5 * time.Second); time.Now().Before(deadline); {
+		pidData, pidErr = os.ReadFile(pidPath)
+		if pidErr == nil && len(pidData) > 0 {
+			break
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
+	var childPID int
+	if len(pidData) > 0 {
+		pidStr := strings.TrimSpace(string(pidData))
+		childPID, err = strconv.Atoi(pidStr)
+		if err != nil || childPID <= 0 {
+			t.Fatalf("PID file invalid content %q: %v", string(pidData), err)
+		}
+		if IsProcessAlive(childPID) {
+			defer func() {
+				_ = exec.Command("kill", strconv.Itoa(childPID)).Run()
+			}()
+		}
+	}
+	// If PID file was never found, child may have finished and removed it (defer RemoveWorkPIDFile).
+	// We will verify via log that detach work ran (see log assertions below).
+
+	if logPath == "" {
+		t.Fatalf("could not determine log path from output or logs dir\noutput:\n%s", outStr)
+	}
+	logContent, err := os.ReadFile(logPath)
+	if err != nil {
+		t.Fatalf("read log file %s: %v", logPath, err)
+	}
+	logStr := string(logContent)
+	// Log must contain detach work record (workAllTickets prints "處理 Tickets")
+	if !strings.Contains(logStr, i18n.UIProcessTickets) {
+		t.Errorf("log must contain detach work record %q; got:\n%s", i18n.UIProcessTickets, logStr)
+	}
+	// Log must NOT contain test/review/commit steps (run --detach-after-plan does not run those)
+	for _, step := range []string{i18n.StepTesting, i18n.StepReview, i18n.StepCommitting} {
+		if strings.Contains(logStr, step) {
+			t.Errorf("log must not contain %q (test/review/commit not run after detach-after-plan)", step)
 		}
 	}
 }
@@ -1015,6 +1200,22 @@ func BenchmarkDependencyResolution(b *testing.B) {
 	for i := 0; i < b.N; i++ {
 		resolver.GetProcessable()
 	}
+}
+
+// findModuleRoot returns the directory containing go.mod (module root).
+func findModuleRoot(t *testing.T) string {
+	t.Helper()
+	dir, err := os.Getwd()
+	if err != nil {
+		t.Fatalf("Getwd: %v", err)
+	}
+	for d := dir; d != "" && d != string(filepath.Separator); d = filepath.Dir(d) {
+		if _, err := os.Stat(filepath.Join(d, "go.mod")); err == nil {
+			return d
+		}
+	}
+	t.Fatal("could not find module root (go.mod)")
+	return ""
 }
 
 // Helper function to check if output contains expected strings

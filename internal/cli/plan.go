@@ -28,6 +28,11 @@ func runPlan(cmd *cobra.Command, args []string) error {
 func runPlanWithFile(ctx context.Context, milestoneFile string) error {
 	w := os.Stdout
 
+	// Refuse to write if background work is running (TICKET-018).
+	if err := ErrIfBackgroundWorkRunning(); err != nil {
+		return err
+	}
+
 	// Check if milestone file exists
 	if _, err := os.Stat(milestoneFile); os.IsNotExist(err) {
 		return orcherrors.ErrFileNotFound(milestoneFile)

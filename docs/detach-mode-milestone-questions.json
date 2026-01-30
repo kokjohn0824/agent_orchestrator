@@ -1,0 +1,11 @@
+{
+  "questions": [
+    "Detach 模式下背景 process 應如何啟動？偏好：1) 同 binary 再 exec 自己並傳遞參數（如 --detach-child），2) 使用 os/exec 起子 process 後父 process 立即 return，3) 或沿用現有流程但將 stdout/stderr 導向 log 檔並讓 CLI 立即結束（需確保 process 不受 terminal 關閉影響，例如 setsid / 雙 fork）？這會影響 signal 處理、config 載入與測試方式。",
+    "work 在 detach 時會寫入同一個 ticket.Store（.tickets）。若使用者在 detach 的 work 執行中又執行「另一個 work」或「plan」或「run」，是否要禁止並行操作（例如用 lock file 或 PID file 偵測）？還是允許「僅查詢」的指令（如 status）與 detach work 並存，只禁止會改動 store 的指令？",
+    "run pipeline 的 Step 2（Coding）目前是同步呼叫 work 的邏輯。未來 run 是否也要支援「在 plan 完成後 detach work，讓使用者可先做別的事，之後再手動執行 test/review/commit」？若是，run 是否需要新增例如 --detach-after-plan 或沿用 work --detach 的語意（例如 run 內部若支援 detach 則在 coding 階段 fork 並 return）？",
+    "Detach 時無法使用現有的 TUI（MultiSpinner/Spinner 輸出到 stdout）。輸出應全部寫入 log 檔，或同時保留一份寫入專用「work 日誌」路徑（例如 .agent-logs/work-YYYYMMDD-HHMMSS.log）供事後檢視？是否需要可設定的 log 路徑（config 或 --log-file），以及是否要在 config 新增欄位（如 WorkDetachLogDir）？",
+    "使用者要如何得知 detach 的 work 是否還在跑、或何時結束？是否需要：1) 固定路徑的 PID file（例如 .tickets/.work.pid）以便用 status 或新子指令顯示「background work: running (PID 12345)」，2) 或僅在啟動時印出 PID 與 log 路徑讓使用者自行 tail/管理？這會影響是否新增「status 顯示 background work 狀態」或獨立指令（如 work-status）。",
+    "現有 work 的測試（work_test.go）會替換 os.Stdout 並檢查輸出。Detach 模式牽涉 process 生命週期與可能的多 process。測試策略是否接受：1) 僅對「非 detach」路徑做現有風格測試，detach 路徑用整合測試（真正 fork 並檢查 PID file / log 存在），2) 或希望將「啟動 detach」邏輯抽成可注入的介面以便在單 process 內 mock，不真的 fork？這會影響 internal/cli 與可能的 internal/daemon 或 internal/detach 套件邊界。",
+    "Homebrew Formula 或現有發佈流程是否需要配合 detach 調整？例如：是否要建議使用者將 agent-orchestrator 放在 PATH、或註明 detach 時需在專案目錄下執行以確保 config 與 .tickets 路徑正確？若有 PID file / 預設 log 路徑，是否要列在文件或 .gitignore 範例中？"
+  ]
+}

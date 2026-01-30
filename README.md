@@ -12,6 +12,8 @@
 
 ## 安裝
 
+建議將 `agent-orchestrator` 放在 PATH 中，以便在任意目錄執行（下列安裝方式均會安裝到 PATH 目錄或需自行確保 PATH 已包含安裝位置）。
+
 ### 一鍵安裝 (curl)
 
 支援 macOS 與 Linux（amd64 / arm64）。預設安裝至 `~/bin`，請確保已加入 PATH。
@@ -88,7 +90,13 @@ agent-orchestrator work -p 5
 
 # 處理單一 ticket
 agent-orchestrator work TICKET-001
+
+# 背景執行（不佔用當前 terminal）：處理全部或單一 ticket
+agent-orchestrator work --detach
+agent-orchestrator work TICKET-001 --detach
 ```
+
+背景執行時，程式會啟動子 process 在背景跑 work，父 process 印出 PID 與日誌路徑後即結束；可用 `agent-orchestrator status` 查看背景工作是否仍在執行。詳見 [Detach 使用說明](docs/detach-usage.md)。
 
 ### 4. 分析現有專案
 
@@ -109,6 +117,14 @@ agent-orchestrator analyze --auto
 agent-orchestrator run docs/milestone-001.md
 ```
 
+**Plan 完成後改為背景 Coding**：若希望 Planning 完成後不佔用 terminal、改由背景執行 work，並稍後手動執行 test/review/commit，可使用：
+
+```bash
+agent-orchestrator run docs/milestone-001.md --detach-after-plan
+```
+
+執行後會印出 PID 與日誌路徑；可用 `agent-orchestrator status` 查看背景 work 是否仍在執行。詳見 [Run --detach-after-plan 流程](docs/run-detach-after-plan.md)。
+
 ## 完整指令列表
 
 ```
@@ -120,7 +136,7 @@ agent-orchestrator
 ├── review               # 程式碼審查
 ├── test                 # 執行測試
 ├── commit [ticket-id]   # 提交變更
-├── run <milestone>      # 完整 pipeline
+├── run <milestone>      # 完整 pipeline（可加 --detach-after-plan 於 plan 後背景 work）
 ├── status               # 查看狀態
 ├── retry                # 重試失敗
 ├── clean                # 清除資料
@@ -151,6 +167,8 @@ agent_timeout: 600             # Agent 執行超時秒數
 # 路徑設定
 tickets_dir: .tickets          # Tickets 儲存目錄
 logs_dir: .agent-logs          # Agent 執行日誌目錄
+# work_detach_log_dir:          # work --detach 日誌目錄（選填，未設則用 logs_dir）
+# work_pid_file:               # work 背景 PID 檔路徑（選填，未設則為 tickets_dir/.work.pid）
 docs_dir: docs                 # 文件目錄
 
 # 執行設定
@@ -183,8 +201,19 @@ export AGENT_FORCE=true                   # Force 模式
 | **logs_dir** | `.agent-logs` | Agent 執行日誌目錄；日誌可能含 prompt 與輸出內容。 |
 | **docs_dir** | `docs` | 文件（如 milestone）輸出目錄。 |
 | **max_parallel** | `3` | `work` 指令同時執行的 agent 數量上限。**何時調整**：機器資源足夠且想加快處理時可提高；資源有限或避免過載時可降低。 |
+| **work_detach_log_dir** | （空） | `work --detach` 時日誌檔寫入的目錄；未設時使用 `logs_dir`。檔名為 `work-YYYYMMDD-HHMMSS.log`。**何時調整**：想將 detach 日誌與一般 agent 日誌分開存放時可設定。 |
+| **work_pid_file** | （空） | `work` 背景執行時的 PID 檔路徑；未設時為 `tickets_dir/.work.pid`（例如 `.tickets/.work.pid`）。**何時調整**：需自訂 PID 檔位置時設定。 |
 | **disable_detailed_log** | `false` | 設為 `true` 時**停用詳細日誌**：不會在 `logs_dir` 寫入含 prompt 與 agent 輸出的日誌檔。**副作用**：無法從日誌還原對話內容。**何時調整**：在含機密或專屬程式碼的環境、或需符合資安/合規要求時，建議設為 `true`。 |
 | **analyze_scopes** | `["all"]` | `analyze` 指令的預設分析範圍；可選 `performance`、`refactor`、`security`、`test`、`docs`、`all`。指令列 `--scope` 會覆寫此預設。**何時調整**：若經常只分析部分面向（例如僅 performance、security），可在此設定以省去每次下 `--scope`。 |
+
+### 專案內產生的檔案（建議加入 .gitignore）
+
+執行 `work` 等指令時，專案內會產生以下檔案，建議在專案 `.gitignore` 中忽略：
+
+- **`.tickets/.work.pid`** — work 背景執行時的 PID 檔（路徑可由設定 `work_pid_file` 覆寫）
+- **`.agent-logs/work-*.log`** — Agent 執行日誌（依 `logs_dir` 設定）；`work --detach` 的日誌檔名為 `work-YYYYMMDD-HHMMSS.log`，目錄可由 `work_detach_log_dir` 指定
+
+本專案已將上述路徑列於根目錄 `.gitignore`，可作為範例參考。
 
 ## Tickets 生命週期
 
@@ -273,6 +302,23 @@ agent-orchestrator commit --all
 # 一鍵執行所有步驟
 agent-orchestrator run docs/milestone.md --analyze-first
 ```
+
+### 流程 4: Plan 後背景 Coding，再手動 test/review/commit
+
+```bash
+# 1. Plan 完成後改為背景 work，CLI 立即返回
+agent-orchestrator run docs/milestone.md --detach-after-plan
+
+# 2. 查看背景 work 是否仍在執行
+agent-orchestrator status
+
+# 3. 背景 work 完成後，手動執行測試、審查、提交
+agent-orchestrator test
+agent-orchestrator review
+agent-orchestrator commit --all
+```
+
+若只想再跑 work 而不重新 plan，可執行 `agent-orchestrator work` 或 `agent-orchestrator work --detach`。完整說明見 [Run --detach-after-plan 流程](docs/run-detach-after-plan.md)。
 
 ## 故障排除
 

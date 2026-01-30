@@ -12,11 +12,18 @@ import (
 	"github.com/spf13/cobra"
 )
 
+const detachChildFlagName = "--detach-child"
+
 var (
 	// Version information (set at build time)
 	Version   = "dev"
 	Commit    = "unknown"
 	BuildDate = "unknown"
+
+	// isDetachChild is set early (before Cobra runs) when os.Args contains --detach-child.
+	// Used to skip re-detach and to adjust behavior (e.g. work command uses it for log-only output).
+	// Child process with --detach-child still loads config in PersistentPreRunE.
+	isDetachChild bool
 
 	// Global flags
 	cfgFile     string
@@ -70,8 +77,27 @@ var rootCmd = &cobra.Command{
 	},
 }
 
+// parseDetachChild sets isDetachChild from args before Cobra runs.
+// This allows the rest of the CLI to know "is detach child" without depending on Cobra parse order.
+func parseDetachChild(args []string) {
+	for _, a := range args {
+		if a == detachChildFlagName {
+			isDetachChild = true
+			return
+		}
+	}
+	isDetachChild = false
+}
+
+// IsDetachChild returns true if the process was started with --detach-child (e.g. by work --detach).
+// Set before Cobra executes; detach-child process still loads config in PersistentPreRunE.
+func IsDetachChild() bool {
+	return isDetachChild
+}
+
 // Execute runs the root command
 func Execute() {
+	parseDetachChild(os.Args)
 	if err := rootCmd.Execute(); err != nil {
 		os.Exit(1)
 	}
@@ -80,6 +106,8 @@ func Execute() {
 func init() {
 	// Persistent flags (available to all commands)
 	rootCmd.PersistentFlags().StringVar(&cfgFile, "config", "", i18n.FlagConfig)
+	rootCmd.PersistentFlags().BoolVar(&isDetachChild, "detach-child", false, "internal: run as detach child (set by work --detach)")
+	_ = rootCmd.PersistentFlags().MarkHidden("detach-child")
 	rootCmd.PersistentFlags().BoolVar(&dryRun, "dry-run", false, i18n.FlagDryRun)
 	rootCmd.PersistentFlags().BoolVarP(&verbose, "verbose", "v", false, i18n.FlagVerbose)
 	rootCmd.PersistentFlags().BoolVar(&debug, "debug", false, i18n.FlagDebug)

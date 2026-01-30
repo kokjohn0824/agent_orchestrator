@@ -1,0 +1,11 @@
+{
+  "questions": [
+    "Detach 模式預期如何實作背景執行？例如：(A) 以子行程（如 nohup / os.StartProcess）在背景跑一次 `work`，並將 stdout/stderr 導向某個 log 檔；(B) 現有 process 直接 fork 並脫離 terminal；或 (C) 其他方式？這會影響 attach 要「連到」的對象（例如 attach 是 tail log、還是連到同一個 daemon process）。",
+    "目前 ticket 只有 pending / in_progress / completed / failed，沒有「工作階段」概念。Detach 後若要讓 attach 能辨識「這次背景 run」的進度，是否需要新增「session / job」抽象（例如在 .tickets 或專案根目錄存一份 run-id、PID、開始時間、log 路徑），還是 attach 只顯示「當下所有 in_progress + 最近 completed」即可，不區分哪一次 work 啟動？",
+    "Attach 的「查看進度」要提供到什麼程度？僅即時顯示 ticket 狀態變化（例如用 status 的表格 + 輪詢或 log 解析）、還是要能即時串流 agent 的 stdout（例如 tail -f 某個 session log）、或兩者都要？若需串流，是否要沿用現有 Charm/Bubbles TUI（例如同一個 MultiSpinner 或 live 表格）？",
+    "現有 `work` 在收到 SIGINT/SIGTERM 會 cancel context 並優雅結束；`status` 會列出 in_progress 的 tickets。Detach 時若背景 process 被 kill，in_progress 會殘留。是否需要讓 attach 或 status 能辨識「已無對應背景 process 的 in_progress」並提示使用者用 retry/clean，或是依賴既有的 retry/clean 流程即可？",
+    "`work` 目前支援 `work [ticket-id]` 與 `work -p N`。Detach 時是否要完整支援相同參數（例如 `work --detach TICKET-001`、`work --detach -p 5`），且 attach 是否要能指定「attach 到某個 run-id」（若未來支援多個背景 run）？",
+    "測試策略：現有 internal/cli/work_test.go 以 temp dir 與 mock store 測 work。Detach/attach 是否需要 (A) 整合測試（真的起子行程、寫 session 檔、attach 讀取）；(B) 僅單元測試（例如 detach 寫入 session 的邏輯、attach 解析 session 與 log 的邏輯用 mock）；或 (C) 兩者都要？是否有現成 CI 限制（例如不能 fork 或需要 headless）？",
+    "部署與相容性：新功能若會寫入 session 檔（例如 .tickets/.run.json 或專案根目錄下某檔），是否要納入 .gitignore / 文件說明，並考慮舊版 CLI 若曾寫過 session 檔、升級後新版的 attach 是否要相容讀取？Homebrew 與 scripts/install.sh 的安裝流程是否需一併更新文件（例如說明 detach/attach 用法）？"
+  ]
+}

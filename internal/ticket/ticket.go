@@ -1,4 +1,9 @@
-// Package ticket provides ticket data structures and operations
+// Package ticket provides ticket data structures and operations.
+//
+// Concurrency (TICKET-018): We do not add version/ETag to Ticket. The store
+// concurrency strategy is fallback (PID-based): CLI write commands check for
+// background work (PID file + process alive) and refuse to run if present.
+// See internal/ticket/store.go and docs/ticket-store-concurrency.md.
 package ticket
 
 import (
@@ -50,7 +55,9 @@ func (t Type) String() string {
 	return string(t)
 }
 
-// Ticket represents a work ticket
+// Ticket represents a work ticket.
+// No version/ETag field is used; concurrent-write avoidance is the caller's
+// responsibility (e.g. CLI checks work PID file before any write).
 type Ticket struct {
 	ID                  string     `json:"id"`
 	Title               string     `json:"title"`

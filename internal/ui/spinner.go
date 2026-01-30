@@ -362,3 +362,15 @@ func repeatString(s string, n int) string {
 	}
 	return strings.Repeat(s, n)
 }
+
+// WriteLogProgress writes a plain-text progress line to w (e.g. log file).
+// No ANSI codes; for use when TUI (spinner) is disabled (e.g. detach-child).
+func WriteLogProgress(w io.Writer, format string, args ...interface{}) {
+	if w == nil {
+		return
+	}
+	fmt.Fprintf(w, format, args...)
+	if len(format) > 0 && format[len(format)-1] != '\n' {
+		fmt.Fprint(w, "\n")
+	}
+}

@@ -1,3 +1,16 @@
+// Package ticket provides ticket data structures and file-based persistence (Store).
+//
+// Concurrency (TICKET-017, TICKET-018)
+// ------------------------------------
+// We use a fallback strategy: we do not add version/ETag to Ticket nor implement
+// read-compare-write or file locks in Store. Instead, callers that modify the store
+// (e.g. CLI commands that call Save, Delete, MoveToStatus, MoveFailed, SaveGeneratedTickets)
+// must ensure no other process is writing at the same time. In practice, when background
+// work (detached work) is running, its PID file exists and the process is alive; CLI
+// write commands should check for this and refuse to run with a clear message.
+// Read-only operations (Load, LoadByStatus, Count, etc.) may run concurrently with
+// background work. See docs/ticket-store-concurrency.md for the full design and
+// scope evaluation.
 package ticket
 
 import (
@@ -12,6 +25,10 @@ import (
 // Store handles ticket persistence. Tickets are stored as JSON files under baseDir,
 // organized by status (pending, in_progress, completed, failed). A path cache
 // speeds up Load/Save/Delete by avoiding directory scans.
+//
+// Concurrency contract: Save/Delete/MoveToStatus/MoveFailed do not perform any
+// locking or version check. Callers that write to the store must ensure no
+// concurrent writers (e.g. by checking the work PID file before proceeding).
 type Store struct {
 	baseDir   string
 	pathCache map[string]string // ticket ID -> file path cache

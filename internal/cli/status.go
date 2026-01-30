@@ -18,6 +18,8 @@ var statusCmd = &cobra.Command{
 }
 
 func runStatus(cmd *cobra.Command, args []string) error {
+	// status 為僅讀（查詢）指令，不呼叫 ErrIfBackgroundWorkRunning，可與背景 work 並存（TICKET-019）。
+	// 僅「會寫入 store」的指令（plan, work, run 等）受並行策略限制。
 	w := os.Stdout
 
 	store := ticket.NewStore(cfg.TicketsDir)
@@ -55,6 +57,26 @@ func runStatus(cmd *cobra.Command, args []string) error {
 		counts[ticket.StatusFailed],
 	)
 	statusTable.Render(w)
+
+	// Show background work if PID file exists and process is alive.
+	// If PID file exists but process is dead, treat as stale and remove the PID file (do not show as running).
+	if cfg != nil {
+		pidPath := cfg.WorkPIDFilePath()
+		pid, err := ReadWorkPIDFile(pidPath)
+		if err == nil {
+			if !IsProcessAlive(pid) {
+				RemoveWorkPIDFile(pidPath)
+			} else {
+				ui.PrintInfo(w, "")
+				ui.PrintInfo(w, fmt.Sprintf(i18n.MsgBackgroundWorkRunningPid, pid))
+				logDir := cfg.LogsDir
+				if cfg.WorkDetachLogDir != "" {
+					logDir = cfg.WorkDetachLogDir
+				}
+				ui.PrintInfo(w, ui.StyleMuted.Render(fmt.Sprintf(i18n.MsgLogPath, logDir)))
+			}
+		}
+	}
 
 	// List tickets by status
 	statuses := []struct {

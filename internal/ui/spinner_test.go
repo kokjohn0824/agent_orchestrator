@@ -2,6 +2,7 @@ package ui
 
 import (
 	"bytes"
+	"io"
 	"testing"
 	"time"
 )
@@ -213,5 +214,56 @@ func TestSpinnerTickerBasedAnimation(t *testing.T) {
 	output := buf.String()
 	if len(output) == 0 {
 		t.Error("Expected spinner animation output")
+	}
+}
+
+func TestWriteLogProgress(t *testing.T) {
+	tests := []struct {
+		name     string
+		format   string
+		args     []interface{}
+		want     string
+		nilWriter bool
+	}{
+		{
+			name:   "single line with newline",
+			format: "Processing ticket %s\n",
+			args:   []interface{}{"TICKET-001"},
+			want:   "Processing ticket TICKET-001\n",
+		},
+		{
+			name:   "single line without newline gets newline",
+			format: "Processing ticket %s",
+			args:   []interface{}{"TICKET-002"},
+			want:   "Processing ticket TICKET-002\n",
+		},
+		{
+			name:   "format with multiple args",
+			format: "處理 %s: %s\n",
+			args:   []interface{}{"TICKET-003", "標題"},
+			want:   "處理 TICKET-003: 標題\n",
+		},
+		{
+			name:     "nil writer does not panic",
+			format:   "test",
+			args:     nil,
+			want:     "",
+			nilWriter: true,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var buf bytes.Buffer
+			var w io.Writer
+			if !tt.nilWriter {
+				w = &buf
+			}
+			// When nilWriter: w is nil (interface value); WriteLogProgress returns without writing
+			WriteLogProgress(w, tt.format, tt.args...)
+			got := buf.String()
+			if got != tt.want {
+				t.Errorf("WriteLogProgress() wrote %q, want %q", got, tt.want)
+			}
+		})
 	}
 }

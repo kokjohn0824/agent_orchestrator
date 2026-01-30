@@ -8,10 +8,19 @@ import (
 // This helps catch typos or incomplete message definitions.
 func TestMessagesNotEmpty(t *testing.T) {
 	messages := map[string]string{
-		"MsgSuccess":     MsgSuccess,
-		"MsgFailed":      MsgFailed,
-		"MsgCompleted":   MsgCompleted,
-		"MsgCancelled":   MsgCancelled,
+		"MsgSuccess":               MsgSuccess,
+		"MsgFailed":                MsgFailed,
+		"MsgCompleted":             MsgCompleted,
+		"MsgCancelled":             MsgCancelled,
+		"MsgDetached":              MsgDetached,
+		"MsgDetachedPid":           MsgDetachedPid,
+		"MsgDetachedPidLog":        MsgDetachedPidLog,
+		"MsgRunDetachCodingDetached":    MsgRunDetachCodingDetached,
+		"MsgRunDetachCodingDetachedNoLog": MsgRunDetachCodingDetachedNoLog,
+		"MsgRunDetachHintNextSteps":     MsgRunDetachHintNextSteps,
+		"MsgBackgroundWorkRunning":    MsgBackgroundWorkRunning,
+		"MsgBackgroundWorkRunningPid": MsgBackgroundWorkRunningPid,
+		"MsgLogPath":                 MsgLogPath,
 		"CmdRootShort":   CmdRootShort,
 		"CmdRootLong":    CmdRootLong,
 		"CmdInitShort":   CmdInitShort,

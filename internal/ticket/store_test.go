@@ -1,8 +1,10 @@
 package ticket
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
+	"sync"
 	"testing"
 )
 
@@ -718,6 +720,66 @@ func TestStore_PathCache_MultipleStatusTransitions(t *testing.T) {
 		newPath := filepath.Join(tempDir, string(newStatus), "MULTI-TRANS.json")
 		if _, err := os.Stat(newPath); os.IsNotExist(err) {
 			t.Errorf("ticket should be in %s directory", newStatus)
+		}
+	}
+}
+
+// Concurrency tests (TICKET-028). Current strategy is fallback: no version/ETag
+// in Ticket, no optimistic locking in Store. We test that multiple goroutines
+// saving different tickets do not corrupt data. Version-conflict retry/error
+// tests are omitted (would apply if Phase 4 adds optimistic lock). PID-based
+// "reject write when work is running" is enforced at CLI layer, not in Store.
+
+// TestStore_Save_ConcurrentDifferentTickets ensures that multiple goroutines
+// saving different tickets do not corrupt data: each ticket is written and
+// can be loaded with correct content.
+func TestStore_Save_ConcurrentDifferentTickets(t *testing.T) {
+	store, tempDir := setupTestStoreForStore(t)
+	defer cleanupTestStoreForStore(t, tempDir)
+
+	const numGoroutines = 32
+	var wg sync.WaitGroup
+	errCh := make(chan error, numGoroutines)
+
+	for i := 0; i < numGoroutines; i++ {
+		wg.Add(1)
+		go func(idx int) {
+			defer wg.Done()
+			ticketID := fmt.Sprintf("CONCURRENT-%02d", idx)
+			ticket := &Ticket{
+				ID:       ticketID,
+				Title:    "Concurrent " + ticketID,
+				Status:   StatusPending,
+				Priority: idx,
+			}
+			if err := store.Save(ticket); err != nil {
+				errCh <- err
+			}
+		}(i)
+	}
+
+	wg.Wait()
+	close(errCh)
+	for err := range errCh {
+		t.Errorf("Save() in goroutine failed: %v", err)
+	}
+
+	// Verify every ticket was saved and can be loaded with correct data
+	for i := 0; i < numGoroutines; i++ {
+		ticketID := fmt.Sprintf("CONCURRENT-%02d", i)
+		loaded, err := store.Load(ticketID)
+		if err != nil {
+			t.Errorf("Load(%s) after concurrent Save: %v", ticketID, err)
+			continue
+		}
+		if loaded.ID != ticketID {
+			t.Errorf("Load(%s) ID = %s", ticketID, loaded.ID)
+		}
+		if loaded.Priority != i {
+			t.Errorf("Load(%s) Priority = %d, want %d", ticketID, loaded.Priority, i)
+		}
+		if loaded.Title != "Concurrent "+ticketID {
+			t.Errorf("Load(%s) Title = %s, want %s", ticketID, loaded.Title, "Concurrent "+ticketID)
 		}
 	}
 }
