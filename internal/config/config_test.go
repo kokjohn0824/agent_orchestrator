@@ -4,6 +4,7 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 )
 
 func TestConfig_EnsureDirs_Permissions(t *testing.T) {
@@ -97,6 +98,31 @@ func TestDefaultConfig(t *testing.T) {
 	if cfg.MaxParallel != 3 {
 		t.Errorf("MaxParallel = %d, want 3", cfg.MaxParallel)
 	}
+
+	if cfg.WorkDetachLogDir != "" {
+		t.Errorf("WorkDetachLogDir = %q, want empty", cfg.WorkDetachLogDir)
+	}
+	if cfg.WorkPIDFile != "" {
+		t.Errorf("WorkPIDFile = %q, want empty", cfg.WorkPIDFile)
+	}
+}
+
+func TestConfig_WorkPIDFilePath(t *testing.T) {
+	t.Run("empty WorkPIDFile uses convention TicketsDir/.work.pid", func(t *testing.T) {
+		cfg := &Config{TicketsDir: "/tmp/.tickets", WorkPIDFile: ""}
+		got := cfg.WorkPIDFilePath()
+		want := filepath.Join("/tmp/.tickets", ".work.pid")
+		if got != want {
+			t.Errorf("WorkPIDFilePath() = %s, want %s", got, want)
+		}
+	})
+	t.Run("set WorkPIDFile returns that path", func(t *testing.T) {
+		cfg := &Config{TicketsDir: "/tmp/.tickets", WorkPIDFile: "/var/run/work.pid"}
+		got := cfg.WorkPIDFilePath()
+		if got != "/var/run/work.pid" {
+			t.Errorf("WorkPIDFilePath() = %s, want /var/run/work.pid", got)
+		}
+	})
 }
 
 func TestConfig_Save_CreatesParentDirectory(t *testing.T) {
@@ -155,6 +181,77 @@ func TestConfig_Save_ExistingDirectory(t *testing.T) {
 	}
 }
 
+func TestLoad_ReadsWorkDetachLogDir(t *testing.T) {
+	tempDir, err := os.MkdirTemp("", "config-load-detach-*")
+	if err != nil {
+		t.Fatalf("failed to create temp dir: %v", err)
+	}
+	defer os.RemoveAll(tempDir)
+
+	configContent := `logs_dir: .agent-logs
+work_detach_log_dir: detach-logs
+tickets_dir: .tickets
+`
+	configPath := filepath.Join(tempDir, ".agent-orchestrator.yaml")
+	if err := os.WriteFile(configPath, []byte(configContent), 0644); err != nil {
+		t.Fatalf("failed to write config file: %v", err)
+	}
+
+	origWd, err := os.Getwd()
+	if err != nil {
+		t.Fatalf("Getwd: %v", err)
+	}
+	if err := os.Chdir(tempDir); err != nil {
+		t.Fatalf("Chdir: %v", err)
+	}
+	defer os.Chdir(origWd)
+
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("Load() error = %v", err)
+	}
+
+	if filepath.Base(cfg.WorkDetachLogDir) != "detach-logs" {
+		t.Errorf("Load() WorkDetachLogDir = %s, want path ending with detach-logs", cfg.WorkDetachLogDir)
+	}
+}
+
+func TestConfig_DetachLogPath(t *testing.T) {
+	ts := time.Date(2026, 1, 30, 14, 5, 3, 0, time.UTC) // YYYYMMDD-HHMMSS = 20260130-140503
+
+	t.Run("log-file override absolute path", func(t *testing.T) {
+		cfg := &Config{ProjectRoot: "/proj", LogsDir: "/proj/.agent-logs"}
+		got := cfg.DetachLogPath("/var/log/detach.log", ts)
+		if got != "/var/log/detach.log" {
+			t.Errorf("DetachLogPath() = %s, want /var/log/detach.log", got)
+		}
+	})
+	t.Run("log-file override relative path resolved with ProjectRoot", func(t *testing.T) {
+		cfg := &Config{ProjectRoot: "/proj", LogsDir: "/proj/.agent-logs"}
+		got := cfg.DetachLogPath("custom/run.log", ts)
+		want := filepath.Join("/proj", "custom", "run.log")
+		if got != want {
+			t.Errorf("DetachLogPath() = %s, want %s", got, want)
+		}
+	})
+	t.Run("no override uses LogsDir and timestamp filename", func(t *testing.T) {
+		cfg := &Config{LogsDir: "/proj/.agent-logs", WorkDetachLogDir: ""}
+		got := cfg.DetachLogPath("", ts)
+		want := filepath.Join("/proj/.agent-logs", "work-20260130-140503.log")
+		if got != want {
+			t.Errorf("DetachLogPath() = %s, want %s", got, want)
+		}
+	})
+	t.Run("no override with WorkDetachLogDir uses dedicated subdir", func(t *testing.T) {
+		cfg := &Config{LogsDir: "/proj/.agent-logs", WorkDetachLogDir: "/proj/detach-logs"}
+		got := cfg.DetachLogPath("", ts)
+		want := filepath.Join("/proj/detach-logs", "work-20260130-140503.log")
+		if got != want {
+			t.Errorf("DetachLogPath() = %s, want %s", got, want)
+		}
+	})
+}
+
 func TestConfig_Validate(t *testing.T) {
 	tests := []struct {
 		name    string
@@ -208,6 +305,28 @@ func TestConfig_Validate(t *testing.T) {
 				AgentOutputFormat: "invalid",
 				AgentTimeout:      600,
 				MaxParallel:       3,
+			},
+			wantErr: true,
+		},
+		{
+			name: "valid config with WorkDetachLogDir set",
+			cfg: &Config{
+				AgentCommand:      "agent",
+				AgentOutputFormat: "text",
+				AgentTimeout:      600,
+				MaxParallel:       3,
+				WorkDetachLogDir:  "custom-logs",
+			},
+			wantErr: false,
+		},
+		{
+			name: "invalid WorkDetachLogDir contains null byte",
+			cfg: &Config{
+				AgentCommand:      "agent",
+				AgentOutputFormat: "text",
+				AgentTimeout:      600,
+				MaxParallel:       3,
+				WorkDetachLogDir:  "path\x00with-null",
 			},
 			wantErr: true,
 		},
