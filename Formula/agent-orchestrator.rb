@@ -8,27 +8,27 @@
 class AgentOrchestrator < Formula
   desc "CLI to orchestrate multiple Cursor Agents (Headless Mode)"
   homepage "https://github.com/kokjohn0824/agent_orchestrator"
-  version "0.1.0"
+  version "0.2.0"
 
   on_macos do
     on_intel do
-      url "https://github.com/kokjohn0824/agent_orchestrator/releases/download/v0.1.0/agent-orchestrator-darwin-amd64"
-      sha256 "8b5fced792c8dd58c983ae976fae642a6a5346c231056249d2b9f8e803d58bdc"
+      url "https://github.com/kokjohn0824/agent_orchestrator/releases/download/v0.2.0/agent-orchestrator-darwin-amd64"
+      sha256 "855125a0158848fdac1cd6f643faf9e3d65685521e71ba52fb8a6bcf5b5b6052"
     end
     on_arm do
-      url "https://github.com/kokjohn0824/agent_orchestrator/releases/download/v0.1.0/agent-orchestrator-darwin-arm64"
-      sha256 "2b7b0077799fd04dfdcefa58fa50ee0663f21562f70c5666b6ba44e80a1e0ee3"
+      url "https://github.com/kokjohn0824/agent_orchestrator/releases/download/v0.2.0/agent-orchestrator-darwin-arm64"
+      sha256 "96ee14cefe435ab169a40e845699c634d7d059e73cbadc9eb0ea71655453826f"
     end
   end
 
   on_linux do
     on_intel do
-      url "https://github.com/kokjohn0824/agent_orchestrator/releases/download/v0.1.0/agent-orchestrator-linux-amd64"
-      sha256 "1d4af3d1ddf87368e324041a6e09937a38a48498f35a263fb1de6d8268b2174b"
+      url "https://github.com/kokjohn0824/agent_orchestrator/releases/download/v0.2.0/agent-orchestrator-linux-amd64"
+      sha256 "0baed43412c67c3e27ac635a1d049cabbea669ceaa84936b8e975fb434cb400e"
     end
     on_arm do
-      url "https://github.com/kokjohn0824/agent_orchestrator/releases/download/v0.1.0/agent-orchestrator-linux-arm64"
-      sha256 "50178d431e989ca8492bef065fbe5f9460db3c6a35082209baa4b73cfa81c817"
+      url "https://github.com/kokjohn0824/agent_orchestrator/releases/download/v0.2.0/agent-orchestrator-linux-arm64"
+      sha256 "b4c10405e1659810e28dd608049f23103d4531591fe65c313fb87a40dee73700"
     end
   end
 
