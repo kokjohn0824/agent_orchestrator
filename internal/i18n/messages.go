@@ -23,8 +23,10 @@ const (
 
 	// Input prompts
 	MsgInputEndHint        = "(輸入空行結束)"
-	MsgTextareaPlaceholder = "在此輸入內容..."
-	MsgTextareaSubmitHint  = "(Ctrl+D 完成輸入，Ctrl+C 取消)"
+	MsgTextareaPlaceholder  = "在此輸入內容..."
+	MsgTextareaSubmitHint   = "(Ctrl+D 完成輸入，Ctrl+C 取消)"
+	MsgTextinputPlaceholder = "在此輸入..."
+	MsgTextinputSubmitHint  = "(Enter 確認，Esc/Ctrl+C 取消)"
 	MsgSelectRange        = "選擇 (1-%d): "
 	MsgInvalidSelection   = "無效的選擇: %s"
 )

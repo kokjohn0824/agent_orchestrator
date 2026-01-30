@@ -23,8 +23,17 @@ func NewPrompt(r io.Reader, w io.Writer) *Prompt {
 	}
 }
 
-// Ask asks a question and returns the user's answer
+// Ask asks a question and returns the user's answer (single line).
+// When running in a TTY, uses an interactive textinput (bubbletea textinput style);
+// otherwise falls back to prompt + scanner input.
 func (p *Prompt) Ask(question string) (string, error) {
+	if input, output, ok := canUseTextarea(p.reader, p.writer); ok {
+		return askSingleLineTextinput(question, i18n.MsgTextinputPlaceholder, i18n.MsgTextinputSubmitHint, input, output)
+	}
+	return p.askSingleLineScanner(question)
+}
+
+func (p *Prompt) askSingleLineScanner(question string) (string, error) {
 	fmt.Fprintf(p.writer, "%s %s\n", StyleInfo.Render("?"), question)
 	fmt.Fprint(p.writer, StyleMuted.Render("  > "))
 
