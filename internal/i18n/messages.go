@@ -144,6 +144,34 @@ const (
   agent-orchestrator config           # 顯示目前設定
   agent-orchestrator config init      # 產生預設設定檔
   agent-orchestrator config path      # 顯示設定檔路徑`
+
+	// Add command
+	CmdAddShort = "新增 ticket"
+	CmdAddLong  = `透過互動式問答或直接參數新增 ticket。
+
+範例:
+  agent-orchestrator add                              # 互動模式
+  agent-orchestrator add --title "實作登入功能"        # 直接模式
+  agent-orchestrator add --title "新增快取" --enhance  # AI 預處理
+  agent-orchestrator add --title "重構" --type refactor --priority 2`
+
+	// Edit command
+	CmdEditShort = "修改 ticket"
+	CmdEditLong  = `修改現有 ticket 的內容。
+
+範例:
+  agent-orchestrator edit TICKET-001                    # 互動模式
+  agent-orchestrator edit TICKET-001 --title "新標題"   # 修改標題
+  agent-orchestrator edit TICKET-001 --priority 1       # 修改優先級
+  agent-orchestrator edit TICKET-001 --enhance          # AI 重新分析`
+
+	// Drop command
+	CmdDropShort = "刪除 ticket"
+	CmdDropLong  = `刪除指定的 ticket。
+
+範例:
+  agent-orchestrator drop TICKET-001
+  agent-orchestrator drop TICKET-001 --force  # 不詢問直接刪除`
 )
 
 // Flag descriptions
@@ -162,7 +190,16 @@ const (
 	FlagSkipTest     = "跳過測試步驟"
 	FlagSkipReview   = "跳過審查步驟"
 	FlagSkipCommit   = "跳過提交步驟"
-	FlagForce        = "不詢問直接清除"
+	FlagForce        = "不詢問直接執行"
+
+	// Add/Edit ticket flags
+	FlagTitle       = "Ticket 標題"
+	FlagType        = "Ticket 類型: feature, bugfix, refactor, test, docs, performance, security"
+	FlagPriority    = "優先級 (1-5，1 最高)"
+	FlagDescription = "詳細描述"
+	FlagDeps        = "依賴的 ticket IDs (逗號分隔)"
+	FlagEnhance     = "使用 AI 預處理補充 ticket 內容"
+	FlagCriteria    = "驗收條件 (逗號分隔)"
 )
 
 // UI messages
@@ -187,14 +224,20 @@ const (
 	UIPipelineComplete = "Pipeline 完成!"
 	UIProcessComplete = "處理完成"
 	UICommonCommands = "常用指令:"
+	UIAddTicket      = "新增 Ticket"
+	UIEditTicket     = "修改 Ticket"
+	UIDropTicket     = "刪除 Ticket"
 
 	// Info messages
-	MsgProjectGoal       = "專案目標: %s"
-	MsgAnalyzeProject    = "分析專案: %s"
-	MsgAnalyzeScope      = "分析範圍: %s"
-	MsgAnalyzeMilestone  = "分析 Milestone: %s"
-	MsgProjectDir        = "專案目錄: %s"
-	MsgMilestone         = "Milestone: %s"
+	MsgProjectGoal           = "專案目標: %s"
+	MsgAnalyzeProject        = "分析專案: %s"
+	MsgAnalyzeScope          = "分析範圍: %s"
+	MsgAnalyzeMilestone      = "分析 Milestone: %s"
+	MsgProjectDir            = "專案目錄: %s"
+	MsgMilestone             = "Milestone: %s"
+	MsgDetectedExistingProject = "偵測到現有專案"
+	MsgProjectSummary        = "專案摘要:"
+	MsgScanComplete          = "掃描完成"
 	MsgMaxParallel       = "最大並行數: %d"
 	MsgIteration         = "迭代 %d: 處理 %d 個 tickets"
 	MsgTicketInfo        = "ID: %s"
@@ -230,6 +273,16 @@ const (
 	PromptConfirmClean   = "確定要清除所有資料嗎？"
 	PromptOverwrite      = "要覆蓋嗎？"
 
+	// Add/Edit ticket prompts
+	PromptTicketTitle    = "請輸入 ticket 標題"
+	PromptTicketDesc     = "請輸入詳細描述 (可多行)"
+	PromptTicketType     = "請選擇 ticket 類型"
+	PromptTicketPriority = "請輸入優先級 (1-5，1 最高)"
+	PromptTicketDeps     = "請輸入依賴的 ticket IDs (逗號分隔，可留空)"
+	PromptTicketCriteria = "請輸入驗收條件 (可多行)"
+	PromptConfirmDrop    = "確定要刪除 ticket %s 嗎？"
+	PromptEditField      = "選擇要修改的欄位"
+
 	// Spinner messages
 	SpinnerGeneratingQuestions = "產生問題中..."
 	SpinnerGeneratingMilestone = "產生 milestone 文件中..."
@@ -239,6 +292,8 @@ const (
 	SpinnerTesting             = "執行測試中..."
 	SpinnerCommitting          = "產生並執行 commit..."
 	SpinnerProcessing          = "處理 %s: %s"
+	SpinnerEnhancing           = "AI 分析並補充 ticket 內容..."
+	SpinnerScanningProject     = "掃描專案結構中..."
 
 	// Success messages
 	MsgQuestionsGenerated     = "已產生問題"
@@ -255,6 +310,10 @@ const (
 	MsgDataCleared            = "已清除所有資料"
 	MsgConfigGenerated        = "已產生設定檔: %s"
 	MsgProcessingComplete     = "%s 完成"
+	MsgTicketAdded            = "已新增 ticket: %s"
+	MsgTicketUpdated          = "已更新 ticket: %s"
+	MsgTicketDropped          = "已刪除 ticket: %s"
+	MsgEnhanceComplete        = "AI 預處理完成"
 
 	// Warning messages
 	MsgNoTicketsGenerated     = "沒有產生任何 tickets"

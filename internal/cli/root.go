@@ -100,6 +100,11 @@ func init() {
 	rootCmd.AddCommand(retryCmd)
 	rootCmd.AddCommand(cleanCmd)
 	rootCmd.AddCommand(configCmd)
+
+	// Ticket management commands
+	rootCmd.AddCommand(addCmd)
+	rootCmd.AddCommand(editCmd)
+	rootCmd.AddCommand(dropCmd)
 }
 
 // versionCmd shows version information

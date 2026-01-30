@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"fmt"
 	"os"
 
 	"github.com/anthropic/agent-orchestrator/internal/i18n"
@@ -55,7 +56,7 @@ func runClean(cmd *cobra.Command, args []string) error {
 
 	for status, count := range counts {
 		if count > 0 {
-			ui.PrintInfo(w, "  - "+string(status)+": "+string(rune('0'+count)))
+			ui.PrintInfo(w, fmt.Sprintf("  - %s: %d", status, count))
 		}
 	}
 

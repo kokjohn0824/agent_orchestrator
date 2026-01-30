@@ -208,6 +208,38 @@ func (pa *PlanningAgent) createMockTickets() []*ticket.Ticket {
 	}
 }
 
+// ProjectSummary contains analyzed information about an existing project
+type ProjectSummary struct {
+	Language    string   // Primary programming language
+	Framework   string   // Framework if detected
+	Structure   string   // Project structure description
+	MainFiles   []string // Key files in the project
+	HasTests    bool     // Whether project has tests
+	HasDocs     bool     // Whether project has documentation
+	Description string   // AI-generated project description
+}
+
+// String returns a formatted string representation of the summary
+func (ps *ProjectSummary) String() string {
+	var sb strings.Builder
+	if ps.Language != "" {
+		sb.WriteString(fmt.Sprintf("  - 語言: %s\n", ps.Language))
+	}
+	if ps.Framework != "" {
+		sb.WriteString(fmt.Sprintf("  - 框架: %s\n", ps.Framework))
+	}
+	if ps.Structure != "" {
+		sb.WriteString(fmt.Sprintf("  - 結構: %s\n", ps.Structure))
+	}
+	if ps.HasTests {
+		sb.WriteString("  - 已有測試: 是\n")
+	}
+	if ps.HasDocs {
+		sb.WriteString("  - 已有文件: 是\n")
+	}
+	return sb.String()
+}
+
 // InitAgent handles interactive project initialization
 type InitAgent struct {
 	caller     *Caller
@@ -224,9 +256,139 @@ func NewInitAgent(caller *Caller, projectDir, docsDir string) *InitAgent {
 	}
 }
 
-// GenerateQuestions generates questions based on the initial goal
-func (ia *InitAgent) GenerateQuestions(ctx context.Context, goal string) ([]string, error) {
-	prompt := fmt.Sprintf(`你是一個專案規劃助手。使用者想要建立以下專案：
+// ScanProject analyzes the existing project and returns a summary
+func (ia *InitAgent) ScanProject(ctx context.Context) (*ProjectSummary, error) {
+	prompt := fmt.Sprintf(`你是一個專案分析專家。請分析當前目錄的專案結構。
+
+專案目錄: %s
+
+請掃描專案並回答：
+1. 主要使用的程式語言
+2. 使用的框架或工具（如果有）
+3. 專案結構（主要資料夾）
+4. 是否有測試檔案
+5. 是否有文件（README, docs/）
+6. 簡短描述這個專案的功能
+
+請以 JSON 格式輸出：
+{
+  "language": "主要語言",
+  "framework": "框架名稱（沒有則空字串）",
+  "structure": "主要資料夾，如 cmd/, internal/, pkg/",
+  "main_files": ["重要檔案1", "重要檔案2"],
+  "has_tests": true/false,
+  "has_docs": true/false,
+  "description": "專案功能簡述"
+}`, ia.projectDir)
+
+	result, err := ia.caller.Call(ctx, prompt,
+		WithWorkingDir(ia.projectDir),
+		WithTimeout(3*time.Minute),
+	)
+
+	if err != nil {
+		if ia.caller.DryRun {
+			return ia.createMockSummary(), nil
+		}
+		return nil, fmt.Errorf("掃描專案失敗: %w", err)
+	}
+
+	summary, err := ia.parseSummary(result.Output)
+	if err != nil {
+		// Return a basic summary on parse error
+		return ia.createMockSummary(), nil
+	}
+
+	return summary, nil
+}
+
+// parseSummary extracts ProjectSummary from the agent output
+func (ia *InitAgent) parseSummary(output string) (*ProjectSummary, error) {
+	start := strings.Index(output, "{")
+	end := strings.LastIndex(output, "}")
+	if start == -1 || end == -1 || end <= start {
+		return nil, fmt.Errorf("no JSON found")
+	}
+
+	jsonStr := output[start : end+1]
+	var data struct {
+		Language    string   `json:"language"`
+		Framework   string   `json:"framework"`
+		Structure   string   `json:"structure"`
+		MainFiles   []string `json:"main_files"`
+		HasTests    bool     `json:"has_tests"`
+		HasDocs     bool     `json:"has_docs"`
+		Description string   `json:"description"`
+	}
+
+	if err := json.Unmarshal([]byte(jsonStr), &data); err != nil {
+		return nil, err
+	}
+
+	return &ProjectSummary{
+		Language:    data.Language,
+		Framework:   data.Framework,
+		Structure:   data.Structure,
+		MainFiles:   data.MainFiles,
+		HasTests:    data.HasTests,
+		HasDocs:     data.HasDocs,
+		Description: data.Description,
+	}, nil
+}
+
+// createMockSummary creates a mock summary for dry run or errors
+func (ia *InitAgent) createMockSummary() *ProjectSummary {
+	return &ProjectSummary{
+		Language:    "[DRY RUN] 未知",
+		Framework:   "[DRY RUN] 未知",
+		Structure:   "[DRY RUN] 未知",
+		MainFiles:   []string{},
+		HasTests:    false,
+		HasDocs:     false,
+		Description: "[DRY RUN] AI 會分析專案結構並產生摘要",
+	}
+}
+
+// GenerateQuestions generates questions based on the initial goal and project summary
+func (ia *InitAgent) GenerateQuestions(ctx context.Context, goal string, summary *ProjectSummary) ([]string, error) {
+	var prompt string
+
+	if summary != nil {
+		// Existing project - generate targeted questions
+		prompt = fmt.Sprintf(`你是一個專案規劃助手。使用者想要在現有專案上進行以下開發：
+
+## 開發目標
+"%s"
+
+## 現有專案資訊
+- 語言: %s
+- 框架: %s
+- 結構: %s
+- 專案描述: %s
+- 已有測試: %v
+- 已有文件: %v
+
+請產生 5-7 個針對性問題，幫助我了解更多細節以便產生完整的 milestone。
+因為這是現有專案，問題應該聚焦在：
+1. 新功能如何與現有架構整合
+2. 是否需要修改現有模組
+3. 與現有功能的互動方式
+4. 相容性考量
+5. 測試策略
+6. 部署/遷移考量
+
+請以 JSON 格式輸出：{"questions": ["問題1", "問題2", ...]}`,
+			goal,
+			summary.Language,
+			summary.Framework,
+			summary.Structure,
+			summary.Description,
+			summary.HasTests,
+			summary.HasDocs,
+		)
+	} else {
+		// New project - generate general questions
+		prompt = fmt.Sprintf(`你是一個專案規劃助手。使用者想要建立以下專案：
 
 "%s"
 
@@ -240,6 +402,7 @@ func (ia *InitAgent) GenerateQuestions(ctx context.Context, goal string) ([]stri
 6. 整合需求
 
 請以 JSON 格式輸出：{"questions": ["問題1", "問題2", ...]}`, goal)
+	}
 
 	result, err := ia.caller.Call(ctx, prompt, WithTimeout(2*time.Minute))
 	if err != nil {
@@ -250,6 +413,9 @@ func (ia *InitAgent) GenerateQuestions(ctx context.Context, goal string) ([]stri
 	questions, err := ia.parseQuestions(result.Output)
 	if err != nil {
 		// Return default questions
+		if summary != nil {
+			return ia.defaultQuestionsExisting(), nil
+		}
 		return ia.defaultQuestions(), nil
 	}
 
@@ -277,7 +443,7 @@ func (ia *InitAgent) parseQuestions(output string) ([]string, error) {
 	return data.Questions, nil
 }
 
-// defaultQuestions returns default questions
+// defaultQuestions returns default questions for new projects
 func (ia *InitAgent) defaultQuestions() []string {
 	return []string{
 		"這個專案使用什麼程式語言？",
@@ -288,8 +454,19 @@ func (ia *InitAgent) defaultQuestions() []string {
 	}
 }
 
+// defaultQuestionsExisting returns default questions for existing projects
+func (ia *InitAgent) defaultQuestionsExisting() []string {
+	return []string{
+		"這個新功能如何與現有架構整合？",
+		"是否需要修改現有的模組或 API？",
+		"有沒有相容性的考量？",
+		"需要新增哪些測試？",
+		"是否需要更新文件？",
+	}
+}
+
 // GenerateMilestone generates a milestone document based on goal and answers
-func (ia *InitAgent) GenerateMilestone(ctx context.Context, goal string, questions []string, answers []string) (string, error) {
+func (ia *InitAgent) GenerateMilestone(ctx context.Context, goal string, questions []string, answers []string, summary *ProjectSummary) (string, error) {
 	// Build Q&A section
 	var qaSection strings.Builder
 	for i, q := range questions {
@@ -307,7 +484,51 @@ func (ia *InitAgent) GenerateMilestone(ctx context.Context, goal string, questio
 		return "", fmt.Errorf("無法建立文件目錄: %w", err)
 	}
 
-	prompt := fmt.Sprintf(`你是一個專案規劃專家。請根據以下資訊產生詳細的 milestone 文件。
+	var prompt string
+
+	if summary != nil {
+		// Existing project - generate enhancement milestone
+		prompt = fmt.Sprintf(`你是一個專案規劃專家。請根據以下資訊產生詳細的 milestone 文件。
+
+## 開發目標
+%s
+
+## 現有專案資訊
+- 語言: %s
+- 框架: %s
+- 專案結構: %s
+- 專案描述: %s
+- 已有測試: %v
+- 已有文件: %v
+
+## 需求細節
+%s
+
+請產生一個 Markdown 格式的 milestone 文件，包含：
+1. 開發目標概述
+2. 現有架構分析（與新功能的關聯）
+3. 功能需求清單
+4. 實作階段規劃（分成多個 phase）
+   - 考慮與現有程式碼的整合順序
+   - 標註需要修改的現有模組
+5. 每個階段的具體任務
+6. 測試計畫（包含整合測試）
+7. 驗收標準
+
+請將結果寫入檔案: %s`,
+			goal,
+			summary.Language,
+			summary.Framework,
+			summary.Structure,
+			summary.Description,
+			summary.HasTests,
+			summary.HasDocs,
+			qaSection.String(),
+			outputPath,
+		)
+	} else {
+		// New project - generate standard milestone
+		prompt = fmt.Sprintf(`你是一個專案規劃專家。請根據以下資訊產生詳細的 milestone 文件。
 
 ## 專案目標
 %s
@@ -324,6 +545,7 @@ func (ia *InitAgent) GenerateMilestone(ctx context.Context, goal string, questio
 6. 驗收標準
 
 請將結果寫入檔案: %s`, goal, qaSection.String(), outputPath)
+	}
 
 	result, err := ia.caller.Call(ctx, prompt,
 		WithWorkingDir(ia.projectDir),

@@ -4,12 +4,92 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"path/filepath"
+	"strings"
 
 	"github.com/anthropic/agent-orchestrator/internal/agent"
 	"github.com/anthropic/agent-orchestrator/internal/i18n"
 	"github.com/anthropic/agent-orchestrator/internal/ui"
 	"github.com/spf13/cobra"
 )
+
+// codeExtensions defines common code file extensions
+var codeExtensions = map[string]bool{
+	".go":    true,
+	".py":    true,
+	".js":    true,
+	".ts":    true,
+	".jsx":   true,
+	".tsx":   true,
+	".java":  true,
+	".c":     true,
+	".cpp":   true,
+	".h":     true,
+	".hpp":   true,
+	".rs":    true,
+	".rb":    true,
+	".php":   true,
+	".swift": true,
+	".kt":    true,
+	".scala": true,
+	".cs":    true,
+	".vue":   true,
+	".svelte": true,
+}
+
+// excludeDirs defines directories to skip when scanning
+var excludeDirs = map[string]bool{
+	"node_modules": true,
+	"vendor":       true,
+	".git":         true,
+	".svn":         true,
+	"dist":         true,
+	"build":        true,
+	"target":       true,
+	"__pycache__":  true,
+	".venv":        true,
+	"venv":         true,
+	".idea":        true,
+	".vscode":      true,
+}
+
+// hasExistingCode checks if the directory contains code files
+func hasExistingCode(dir string) bool {
+	codeFileCount := 0
+	maxFilesToCheck := 100 // limit for performance
+
+	filepath.WalkDir(dir, func(path string, d os.DirEntry, err error) error {
+		if err != nil {
+			return nil // skip errors
+		}
+
+		// Skip excluded directories
+		if d.IsDir() {
+			if excludeDirs[d.Name()] || strings.HasPrefix(d.Name(), ".") {
+				return filepath.SkipDir
+			}
+			return nil
+		}
+
+		// Check file extension
+		ext := strings.ToLower(filepath.Ext(d.Name()))
+		if codeExtensions[ext] {
+			codeFileCount++
+			if codeFileCount >= 3 { // found enough code files
+				return filepath.SkipAll
+			}
+		}
+
+		maxFilesToCheck--
+		if maxFilesToCheck <= 0 {
+			return filepath.SkipAll
+		}
+
+		return nil
+	})
+
+	return codeFileCount >= 3
+}
 
 var initCmd = &cobra.Command{
 	Use:   "init [goal]",
@@ -47,11 +127,35 @@ func runInit(cmd *cobra.Command, args []string) error {
 
 	initAgent := agent.NewInitAgent(caller, cfg.ProjectRoot, cfg.DocsDir)
 
-	// Generate questions
+	// Check if this is an existing project with code
+	var summary *agent.ProjectSummary
+	if hasExistingCode(cfg.ProjectRoot) {
+		ui.PrintInfo(w, i18n.MsgDetectedExistingProject)
+
+		// Scan project structure
+		spinner := ui.NewSpinner(i18n.SpinnerScanningProject, w)
+		spinner.Start()
+
+		summary, err = initAgent.ScanProject(ctx)
+		if err != nil {
+			spinner.Fail("掃描專案失敗")
+			// Continue without summary on error
+			summary = nil
+		} else {
+			spinner.Success(i18n.MsgScanComplete)
+
+			// Display project summary
+			ui.PrintInfo(w, i18n.MsgProjectSummary)
+			fmt.Fprint(w, summary.String())
+		}
+		ui.PrintInfo(w, "")
+	}
+
+	// Generate questions (with or without summary)
 	spinner := ui.NewSpinner(i18n.SpinnerGeneratingQuestions, w)
 	spinner.Start()
 
-	questions, err := initAgent.GenerateQuestions(ctx, goal)
+	questions, err := initAgent.GenerateQuestions(ctx, goal, summary)
 	if err != nil {
 		spinner.Fail(i18n.SpinnerFailQuestions)
 		return err
@@ -72,12 +176,12 @@ func runInit(cmd *cobra.Command, args []string) error {
 		answers = append(answers, answer)
 	}
 
-	// Generate milestone
+	// Generate milestone (with or without summary)
 	ui.PrintInfo(w, "")
 	spinner = ui.NewSpinner(i18n.SpinnerGeneratingMilestone, w)
 	spinner.Start()
 
-	milestonePath, err := initAgent.GenerateMilestone(ctx, goal, questions, answers)
+	milestonePath, err := initAgent.GenerateMilestone(ctx, goal, questions, answers, summary)
 	if err != nil {
 		spinner.Fail(i18n.SpinnerFailMilestone)
 		return err
