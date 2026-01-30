@@ -6,6 +6,11 @@ agent-orchestrator
 
 # Runtime data
 .tickets/
+.tickets/.work.pid
+
+# Detach: PID file and agent logs (avoid committing detach output)
+.agent-logs/
+.agent-logs/work-*.log
 
 # Go specific
 *.exe
