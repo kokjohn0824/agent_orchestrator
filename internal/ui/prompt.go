@@ -101,10 +101,18 @@ func (p *Prompt) Confirm(question string, defaultYes bool) (bool, error) {
 	return defaultYes, nil
 }
 
-// Select asks the user to select from a list of options
+// Select asks the user to select from a list of options.
+// When running in a TTY, uses an interactive list (bubbletea list-simple style);
+// otherwise falls back to numbered prompt + scanner input.
 func (p *Prompt) Select(question string, options []string) (int, error) {
-	fmt.Fprintf(p.writer, "%s %s\n", StyleInfo.Render("?"), question)
+	if input, output, ok := canUseTextarea(p.reader, p.writer); ok {
+		return askSelectList(question, options, input, output)
+	}
+	return p.askSelectScanner(question, options)
+}
 
+func (p *Prompt) askSelectScanner(question string, options []string) (int, error) {
+	fmt.Fprintf(p.writer, "%s %s\n", StyleInfo.Render("?"), question)
 	for i, opt := range options {
 		fmt.Fprintf(p.writer, "  %s %s\n", StyleMuted.Render(fmt.Sprintf("%d.", i+1)), opt)
 	}
