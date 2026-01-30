@@ -8,7 +8,7 @@ set -e
 
 REPO="${AGENT_ORCHESTRATOR_REPO:-kokjohn0824/agent_orchestrator}"
 BINARY="agent-orchestrator"
-LATEST_URL="https://github.com/${REPO}/releases/latest"
+API_LATEST="https://api.github.com/repos/${REPO}/releases/latest"
 
 # Detect OS and arch (darwin/linux × amd64/arm64)
 OS=$(uname -s)
@@ -33,9 +33,12 @@ case "$ARCH" in
 esac
 
 ASSET="${BINARY}-${OS}-${ARCH}"
-# Resolve latest tag (follow redirect from /releases/latest)
-REDIRECT=$(curl -sI -o /dev/null -w '%{url_effective}' "${LATEST_URL}")
-TAG=$(basename "$REDIRECT")
+# Resolve latest release tag via GitHub API (does not rely on /releases/latest redirect)
+TAG=$(curl -sSfL "${API_LATEST}" | grep '"tag_name":' | sed -E 's/.*"tag_name"[[:space:]]*:[[:space:]]*"([^"]+)".*/\1/')
+if [ -z "$TAG" ]; then
+  echo "Could not find latest release. Check that a release exists: https://github.com/${REPO}/releases"
+  exit 1
+fi
 DOWNLOAD_URL="https://github.com/${REPO}/releases/download/${TAG}/${ASSET}"
 
 if [ -n "$PREFIX" ]; then
@@ -49,7 +52,7 @@ echo "Installing ${BINARY} (${OS}-${ARCH}) to ${INSTALL_PATH} ..."
 
 mkdir -p "$INSTALL_DIR"
 if ! curl -fSL -o "$INSTALL_PATH" "$DOWNLOAD_URL"; then
-  echo "Download failed. Check that a release exists: ${LATEST_URL}"
+  echo "Download failed. Check that release ${TAG} and asset ${ASSET} exist: https://github.com/${REPO}/releases"
   exit 1
 fi
 chmod +x "$INSTALL_PATH"
