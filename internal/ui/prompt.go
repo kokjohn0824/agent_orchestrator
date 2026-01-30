@@ -40,6 +40,14 @@ func (p *Prompt) Ask(question string) (string, error) {
 
 // AskMultiline asks a question that can have multiple lines of input
 func (p *Prompt) AskMultiline(question string) ([]string, error) {
+	if input, output, ok := canUseTextarea(p.reader, p.writer); ok {
+		return askMultilineTextarea(question, input, output)
+	}
+
+	return p.askMultilineScanner(question)
+}
+
+func (p *Prompt) askMultilineScanner(question string) ([]string, error) {
 	fmt.Fprintf(p.writer, "%s %s\n", StyleInfo.Render("?"), question)
 	fmt.Fprintln(p.writer, StyleMuted.Render("  "+i18n.MsgInputEndHint))
 
@@ -51,8 +59,8 @@ func (p *Prompt) AskMultiline(question string) ([]string, error) {
 		if !scanner.Scan() {
 			break
 		}
-		line := strings.TrimSpace(scanner.Text())
-		if line == "" {
+		line := strings.TrimRight(scanner.Text(), "\r")
+		if strings.TrimSpace(line) == "" {
 			break
 		}
 		lines = append(lines, line)

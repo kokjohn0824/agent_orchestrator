@@ -26,6 +26,7 @@ type Result struct {
 	Duration     time.Duration
 	ExitCode     int
 	StreamEvents []StreamEvent
+	LogPath      string // Path to log file when detailed logging is enabled
 }
 
 // StreamEvent represents a streaming event from the agent
@@ -169,6 +170,9 @@ func (c *Caller) Call(ctx context.Context, prompt string, opts ...CallOption) (*
 
 	if result != nil {
 		result.Duration = time.Since(startTime)
+		if logFile != nil {
+			result.LogPath = logFile.Name()
+		}
 	}
 
 	// Log result

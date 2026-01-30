@@ -218,10 +218,13 @@ func processTicket(ctx context.Context, store *ticket.Store, t *ticket.Ticket) e
 		errMsg := "execution failed"
 		if err != nil {
 			errMsg = err.Error()
-		} else if result.Error != "" {
+		} else if result != nil && result.Error != "" {
 			errMsg = result.Error
 		}
 		t.MarkFailed(fmt.Errorf("%s", errMsg))
+		if result != nil && result.LogPath != "" {
+			t.ErrorLog = result.LogPath
+		}
 		store.Save(t)
 		return fmt.Errorf("ticket %s failed: %s", t.ID, errMsg)
 	}
@@ -264,10 +267,13 @@ func processTicketWithMultiSpinner(ctx context.Context, store *ticket.Store, t *
 		errMsg := "execution failed"
 		if err != nil {
 			errMsg = err.Error()
-		} else if result.Error != "" {
+		} else if result != nil && result.Error != "" {
 			errMsg = result.Error
 		}
 		t.MarkFailed(fmt.Errorf("%s", errMsg))
+		if result != nil && result.LogPath != "" {
+			t.ErrorLog = result.LogPath
+		}
 		store.Save(t)
 		return fmt.Errorf("ticket %s failed: %s", t.ID, errMsg)
 	}

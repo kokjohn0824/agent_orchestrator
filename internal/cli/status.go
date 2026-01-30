@@ -88,9 +88,19 @@ func runStatus(cmd *cobra.Command, args []string) error {
 				ui.PrintInfo(w, ui.StyleMuted.Render(fmt.Sprintf(i18n.MsgDependencies, t.Dependencies)))
 			}
 
-			// Show error if failed
-			if s.status == ticket.StatusFailed && t.Error != "" {
-				ui.PrintInfo(w, ui.StyleError.Render(fmt.Sprintf(i18n.MsgErrorDetail, ui.Truncate(t.Error, 60))))
+			// Show full error and log path if failed
+			if s.status == ticket.StatusFailed {
+				if t.Error != "" {
+					// Show full error (up to 200 chars for readability)
+					errDisplay := t.Error
+					if len(errDisplay) > 200 {
+						errDisplay = errDisplay[:200] + "..."
+					}
+					ui.PrintInfo(w, ui.StyleError.Render(fmt.Sprintf(i18n.MsgErrorDetail, errDisplay)))
+				}
+				if t.ErrorLog != "" {
+					ui.PrintInfo(w, ui.StyleMuted.Render(fmt.Sprintf(i18n.MsgErrorLog, t.ErrorLog)))
+				}
 			}
 		}
 	}

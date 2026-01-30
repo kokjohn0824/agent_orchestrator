@@ -67,6 +67,7 @@ type Ticket struct {
 	CompletedAt         *time.Time `json:"completed_at,omitempty"`
 	AgentOutput         string     `json:"agent_output,omitempty"`
 	Error               string     `json:"error,omitempty"`
+	ErrorLog            string     `json:"error_log,omitempty"` // Path to agent log file when failed
 }
 
 // NewTicket creates a new ticket with default values
