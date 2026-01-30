@@ -46,6 +46,29 @@ func runCommit(cmd *cobra.Command, args []string) error {
 	return commitSingleTicket(ctx, store, args[0])
 }
 
+// filesForTicket returns the subset of changedFiles that belong to this ticket
+// (intersection with FilesToModify and FilesToCreate). If the ticket has no
+// plan files, returns nil so callers can fall back to full changes.
+func filesForTicket(t *ticket.Ticket, changedFiles []string) []string {
+	planSet := make(map[string]struct{})
+	for _, p := range t.FilesToModify {
+		planSet[p] = struct{}{}
+	}
+	for _, p := range t.FilesToCreate {
+		planSet[p] = struct{}{}
+	}
+	if len(planSet) == 0 {
+		return nil
+	}
+	var out []string
+	for _, f := range changedFiles {
+		if _, ok := planSet[f]; ok {
+			out = append(out, f)
+		}
+	}
+	return out
+}
+
 func commitSingleTicket(ctx context.Context, store *ticket.Store, ticketID string) error {
 	w := os.Stdout
 
@@ -59,8 +82,22 @@ func commitSingleTicket(ctx context.Context, store *ticket.Store, ticketID strin
 		ui.PrintWarning(w, fmt.Sprintf(i18n.MsgTicketStatusWarning, ticketID, t.Status))
 	}
 
-	// Get git changes
-	changes := getGitStatus(ctx)
+	changedFiles := getGitChangedFiles(ctx)
+	if len(changedFiles) == 0 {
+		ui.PrintInfo(w, i18n.MsgNoChangesToCommit)
+		return nil
+	}
+
+	filesToStage := filesForTicket(t, changedFiles)
+	if filesToStage == nil {
+		filesToStage = changedFiles
+	}
+	if len(filesToStage) == 0 {
+		ui.PrintInfo(w, i18n.MsgNoChangesToCommit)
+		return nil
+	}
+
+	changes := getGitStatusForFiles(ctx, filesToStage)
 	if changes == "" {
 		ui.PrintInfo(w, i18n.MsgNoChangesToCommit)
 		return nil
@@ -88,7 +125,7 @@ func commitSingleTicket(ctx context.Context, store *ticket.Store, ticketID strin
 	spinner := ui.NewSpinner(i18n.SpinnerCommitting, w)
 	spinner.Start()
 
-	result, err := commitAgent.Commit(ctx, t.ID, t.Title, changes)
+	result, err := commitAgent.Commit(ctx, t.ID, t.Title, changes, filesToStage)
 	if err != nil {
 		spinner.Fail(i18n.SpinnerFailCommit)
 		return err
@@ -135,15 +172,31 @@ func commitAllTickets(ctx context.Context, store *ticket.Store) error {
 	for i, t := range completed {
 		ui.PrintStep(w, i+1, len(completed), fmt.Sprintf("提交 %s: %s", t.ID, t.Title))
 
-		// Get current changes
-		changes := getGitStatus(ctx)
+		changedFiles := getGitChangedFiles(ctx)
+		if len(changedFiles) == 0 {
+			ui.PrintInfo(w, "  "+i18n.MsgSkipNoChanges)
+			skipped++
+			continue
+		}
+
+		filesToStage := filesForTicket(t, changedFiles)
+		if filesToStage == nil {
+			filesToStage = changedFiles
+		}
+		if len(filesToStage) == 0 {
+			ui.PrintInfo(w, "  "+i18n.MsgSkipNoChanges)
+			skipped++
+			continue
+		}
+
+		changes := getGitStatusForFiles(ctx, filesToStage)
 		if changes == "" {
 			ui.PrintInfo(w, "  "+i18n.MsgSkipNoChanges)
 			skipped++
 			continue
 		}
 
-		result, err := commitAgent.Commit(ctx, t.ID, t.Title, changes)
+		result, err := commitAgent.Commit(ctx, t.ID, t.Title, changes, filesToStage)
 		if err != nil || !result.Success {
 			ui.PrintError(w, "  "+i18n.SpinnerFailCommit)
 			failed++

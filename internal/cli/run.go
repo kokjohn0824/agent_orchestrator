@@ -245,14 +245,26 @@ func runPipeline(cmd *cobra.Command, args []string) error {
 		completedTickets, _ := store.LoadByStatus(ticket.StatusCompleted)
 		commitAgent := agent.NewCommitAgent(caller, cfg.ProjectRoot)
 
-		changes := getGitStatus(ctx)
 		commitCount := 0
-		if changes != "" {
-			for _, t := range completedTickets {
-				result, err := commitAgent.Commit(ctx, t.ID, t.Title, changes)
-				if err == nil && result.Success {
-					commitCount++
-				}
+		for _, t := range completedTickets {
+			changedFiles := getGitChangedFiles(ctx)
+			if len(changedFiles) == 0 {
+				break
+			}
+			filesToStage := filesForTicket(t, changedFiles)
+			if filesToStage == nil {
+				filesToStage = changedFiles
+			}
+			if len(filesToStage) == 0 {
+				continue
+			}
+			changes := getGitStatusForFiles(ctx, filesToStage)
+			if changes == "" {
+				continue
+			}
+			result, err := commitAgent.Commit(ctx, t.ID, t.Title, changes, filesToStage)
+			if err == nil && result.Success {
+				commitCount++
 			}
 		}
 

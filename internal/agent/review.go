@@ -384,9 +384,10 @@ func NewCommitAgent(caller *Caller, projectDir string) *CommitAgent {
 }
 
 // Commit runs the agent to stage and commit changes with a message referencing the ticket.
+// If filesToStage is non-empty, the agent is instructed to only add and commit those paths.
 // Returns the agent Result and any error.
-func (ca *CommitAgent) Commit(ctx context.Context, ticketID, ticketTitle, changes string) (*Result, error) {
-	prompt := ca.buildCommitPrompt(ticketID, ticketTitle, changes)
+func (ca *CommitAgent) Commit(ctx context.Context, ticketID, ticketTitle, changes string, filesToStage []string) (*Result, error) {
+	prompt := ca.buildCommitPrompt(ticketID, ticketTitle, changes, filesToStage)
 
 	return ca.caller.Call(ctx, prompt,
 		WithWorkingDir(ca.projectDir),
@@ -394,8 +395,13 @@ func (ca *CommitAgent) Commit(ctx context.Context, ticketID, ticketTitle, change
 	)
 }
 
-// buildCommitPrompt creates the prompt for committing
-func (ca *CommitAgent) buildCommitPrompt(ticketID, ticketTitle, changes string) string {
+// buildCommitPrompt creates the prompt for committing.
+// When filesToStage is non-empty, the prompt instructs the agent to only add those files.
+func (ca *CommitAgent) buildCommitPrompt(ticketID, ticketTitle, changes string, filesToStage []string) string {
+	addStep := "2. 執行 git add 將相關檔案加入暫存區"
+	if len(filesToStage) > 0 {
+		addStep = "2. 只對以下檔案執行 git add 並加入暫存區，不要 add 其他檔案：\n" + strings.Join(filesToStage, "\n")
+	}
 	return fmt.Sprintf(`你是一個 Git Commit Agent。請根據以下變更產生適當的 commit 並提交。
 
 專案目錄: %s
@@ -407,7 +413,7 @@ Ticket 標題: %s
 
 請:
 1. 分析變更內容
-2. 執行 git add 將相關檔案加入暫存區
+%s
 3. 產生符合 Conventional Commits 格式的 commit message
 4. 執行 git commit
 
@@ -418,6 +424,6 @@ Commit message 格式:
 
 Refs: %s
 
-Type 應該是: feat, fix, docs, style, refactor, test, chore`, 
-		ca.projectDir, ticketID, ticketTitle, changes, ticketID)
+Type 應該是: feat, fix, docs, style, refactor, test, chore`,
+		ca.projectDir, ticketID, ticketTitle, changes, addStep, ticketID)
 }

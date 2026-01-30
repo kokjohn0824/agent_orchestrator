@@ -423,24 +423,46 @@ func TestParseScopes(t *testing.T) {
 func TestCommitAgent_buildCommitPrompt(t *testing.T) {
 	ca := NewCommitAgent(nil, "/test/project")
 
-	prompt := ca.buildCommitPrompt("TICKET-001", "Add feature", "M file.go\nA new.go")
+	t.Run("no filesToStage", func(t *testing.T) {
+		prompt := ca.buildCommitPrompt("TICKET-001", "Add feature", "M file.go\nA new.go", nil)
 
-	expectedContents := []string{
-		"/test/project",
-		"TICKET-001",
-		"Add feature",
-		"M file.go",
-		"A new.go",
-		"Conventional Commits",
-		"git add",
-		"git commit",
-	}
-
-	for _, expected := range expectedContents {
-		if !strings.Contains(prompt, expected) {
-			t.Errorf("buildCommitPrompt() should contain %q", expected)
+		expectedContents := []string{
+			"/test/project",
+			"TICKET-001",
+			"Add feature",
+			"M file.go",
+			"A new.go",
+			"Conventional Commits",
+			"git add",
+			"git commit",
 		}
-	}
+
+		for _, expected := range expectedContents {
+			if !strings.Contains(prompt, expected) {
+				t.Errorf("buildCommitPrompt() should contain %q", expected)
+			}
+		}
+	})
+
+	t.Run("with filesToStage", func(t *testing.T) {
+		filesToStage := []string{"file.go", "new.go"}
+		prompt := ca.buildCommitPrompt("TICKET-001", "Add feature", "M file.go\nA new.go", filesToStage)
+
+		expectedContents := []string{
+			"只對以下檔案執行 git add",
+			"不要 add 其他檔案",
+			"file.go",
+			"new.go",
+			"Conventional Commits",
+			"git commit",
+		}
+
+		for _, expected := range expectedContents {
+			if !strings.Contains(prompt, expected) {
+				t.Errorf("buildCommitPrompt() with filesToStage should contain %q", expected)
+			}
+		}
+	})
 }
 
 func TestTestAgent_buildTestPrompt(t *testing.T) {

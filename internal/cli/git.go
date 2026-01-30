@@ -49,6 +49,40 @@ func getGitChangedFiles(ctx context.Context) []string {
 	return files
 }
 
+// getGitStatusForFiles returns only the "git status --porcelain" lines whose
+// path is in files. Used by commit to restrict which changes are shown/staged
+// per ticket. Returns empty string if files is empty or no matching lines.
+func getGitStatusForFiles(ctx context.Context, files []string) string {
+	if len(files) == 0 {
+		return ""
+	}
+	filesSet := make(map[string]struct{}, len(files))
+	for _, f := range files {
+		filesSet[f] = struct{}{}
+	}
+	full := getGitStatus(ctx)
+	if full == "" {
+		return ""
+	}
+	var out []string
+	for _, line := range strings.Split(full, "\n") {
+		line = strings.TrimSpace(line)
+		if line == "" {
+			continue
+		}
+		var path string
+		if len(line) > 3 && line[2] == ' ' {
+			path = strings.TrimSpace(line[3:])
+		} else {
+			path = line
+		}
+		if _, ok := filesSet[path]; ok {
+			out = append(out, line)
+		}
+	}
+	return strings.TrimSpace(strings.Join(out, "\n"))
+}
+
 // getGitStatus returns the output of "git status --porcelain" for the project
 // root, or empty string if the root is invalid or the command fails. Used by
 // run and commit commands.
