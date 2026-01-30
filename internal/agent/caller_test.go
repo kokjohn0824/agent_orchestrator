@@ -2,6 +2,11 @@ package agent
 
 import (
 	"bytes"
+	"context"
+	"fmt"
+	"os"
+	"os/exec"
+	"strings"
 	"testing"
 )
 
@@ -490,5 +495,39 @@ func TestCaller_CreateLogFile_EmptyLogDir(t *testing.T) {
 	if logFile != nil {
 		logFile.Close()
 		t.Error("createLogFile() should return nil when LogDir is empty")
+	}
+}
+
+// TestCaller_executeStream_helper is run as a subprocess to produce stdout for executeStream tests.
+// Set GO_TEST_HELPER=output_long_line to print a line > 64KB (default bufio max token).
+func TestCaller_executeStream_helper(t *testing.T) {
+	switch os.Getenv("GO_TEST_HELPER") {
+	case "output_long_line":
+		// 70KB line; without scanner.Buffer() this would trigger bufio.ErrTooLong
+		fmt.Print(strings.Repeat("x", 70*1024) + "\n")
+		os.Exit(0)
+	}
+}
+
+func TestCaller_executeStream_longLineAndScannerErr(t *testing.T) {
+	if os.Getenv("GO_TEST_HELPER") == "output_long_line" {
+		return
+	}
+
+	caller := NewCaller("cursor", false, "stream-json", "")
+	ctx := context.Background()
+	cmd := exec.Command(os.Args[0], "-test.run=^TestCaller_executeStream_helper$")
+	cmd.Env = append(os.Environ(), "GO_TEST_HELPER=output_long_line")
+
+	result, err := caller.executeStream(ctx, cmd, nil, nil)
+	if err != nil {
+		t.Fatalf("executeStream with long line: %v", err)
+	}
+	if !result.Success {
+		t.Errorf("result.Success = false, want true")
+	}
+	wantMinLen := 70 * 1024
+	if len(result.Output) < wantMinLen {
+		t.Errorf("result.Output length = %d, want at least %d", len(result.Output), wantMinLen)
 	}
 }

@@ -301,6 +301,82 @@ func TestStore_MoveToStatus(t *testing.T) {
 	}
 }
 
+func TestStore_CountByStatus(t *testing.T) {
+	store, tempDir := setupTestStoreForStore(t)
+	defer cleanupTestStoreForStore(t, tempDir)
+
+	// Create tickets
+	tickets := []*Ticket{
+		{ID: "P1", Title: "Pending 1", Status: StatusPending},
+		{ID: "P2", Title: "Pending 2", Status: StatusPending},
+		{ID: "IP1", Title: "In Progress", Status: StatusInProgress},
+		{ID: "C1", Title: "Completed", Status: StatusCompleted},
+	}
+
+	for _, tk := range tickets {
+		store.Save(tk)
+	}
+
+	tests := []struct {
+		name      string
+		status    Status
+		wantCount int
+	}{
+		{"pending", StatusPending, 2},
+		{"in_progress", StatusInProgress, 1},
+		{"completed", StatusCompleted, 1},
+		{"failed", StatusFailed, 0},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			n, err := store.CountByStatus(tt.status)
+			if err != nil {
+				t.Fatalf("CountByStatus() error = %v", err)
+			}
+			if n != tt.wantCount {
+				t.Errorf("CountByStatus(%s) = %d, want %d", tt.status, n, tt.wantCount)
+			}
+		})
+	}
+
+	// CountByStatus should match LoadByStatus count (no JSON parsing, same result)
+	for _, status := range []Status{StatusPending, StatusInProgress, StatusCompleted, StatusFailed} {
+		byDir, err := store.CountByStatus(status)
+		if err != nil {
+			t.Fatalf("CountByStatus(%s) error = %v", status, err)
+		}
+		ticketsByStatus, err := store.LoadByStatus(status)
+		if err != nil {
+			t.Fatalf("LoadByStatus(%s) error = %v", status, err)
+		}
+		if byDir != len(ticketsByStatus) {
+			t.Errorf("CountByStatus(%s) = %d, LoadByStatus count = %d", status, byDir, len(ticketsByStatus))
+		}
+	}
+}
+
+func TestStore_CountByStatus_IgnoresNonJson(t *testing.T) {
+	store, tempDir := setupTestStoreForStore(t)
+	defer cleanupTestStoreForStore(t, tempDir)
+
+	store.Save(&Ticket{ID: "T1", Title: "One", Status: StatusPending})
+
+	// Add a non-.json file in the same directory; CountByStatus should not count it
+	pendingDir := filepath.Join(tempDir, "pending")
+	if err := os.WriteFile(filepath.Join(pendingDir, "readme.txt"), []byte("ignore"), 0644); err != nil {
+		t.Fatalf("failed to write readme: %v", err)
+	}
+
+	n, err := store.CountByStatus(StatusPending)
+	if err != nil {
+		t.Fatalf("CountByStatus() error = %v", err)
+	}
+	if n != 1 {
+		t.Errorf("CountByStatus(pending) = %d, want 1 (readme.txt should be ignored)", n)
+	}
+}
+
 func TestStore_Count(t *testing.T) {
 	store, tempDir := setupTestStoreForStore(t)
 	defer cleanupTestStoreForStore(t, tempDir)
@@ -313,8 +389,8 @@ func TestStore_Count(t *testing.T) {
 		{ID: "C1", Title: "Completed", Status: StatusCompleted},
 	}
 
-	for _, t := range tickets {
-		store.Save(t)
+	for _, tk := range tickets {
+		store.Save(tk)
 	}
 
 	counts, err := store.Count()

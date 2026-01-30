@@ -8,17 +8,19 @@ import (
 	"strings"
 	"time"
 
+	"github.com/anthropic/agent-orchestrator/internal/i18n"
 	"github.com/anthropic/agent-orchestrator/internal/jsonutil"
 	"github.com/anthropic/agent-orchestrator/internal/ticket"
 )
 
-// EnhanceAgent enhances ticket content using AI
+// EnhanceAgent uses the agent to enrich a ticket with more details (description, complexity,
+// acceptance criteria, files to create/modify) based on the project structure.
 type EnhanceAgent struct {
 	caller     *Caller
 	projectDir string
 }
 
-// NewEnhanceAgent creates a new enhance agent
+// NewEnhanceAgent creates an EnhanceAgent with the given Caller and project directory.
 func NewEnhanceAgent(caller *Caller, projectDir string) *EnhanceAgent {
 	return &EnhanceAgent{
 		caller:     caller,
@@ -26,13 +28,15 @@ func NewEnhanceAgent(caller *Caller, projectDir string) *EnhanceAgent {
 	}
 }
 
-// Enhance analyzes the ticket and project to add more details
+// Enhance invokes the agent to analyze the ticket and project, then merges the AI output
+// into a new ticket (description, estimated_complexity, acceptance_criteria, files_to_create/modify).
+// Output is written to .tickets/enhance-result.json. On dry run, returns a mock-enhanced ticket.
 func (ea *EnhanceAgent) Enhance(ctx context.Context, t *ticket.Ticket) (*ticket.Ticket, error) {
 	prompt := ea.buildPrompt(t)
 
 	outputFile := filepath.Join(ea.projectDir, ".tickets", "enhance-result.json")
 	if err := os.MkdirAll(filepath.Dir(outputFile), 0700); err != nil {
-		return nil, fmt.Errorf("無法建立輸出目錄: %w", err)
+		return nil, fmt.Errorf(i18n.ErrAgentMkdirOutput, err)
 	}
 
 	result, jsonData, err := ea.caller.CallForJSON(ctx, prompt, outputFile,
@@ -44,11 +48,11 @@ func (ea *EnhanceAgent) Enhance(ctx context.Context, t *ticket.Ticket) (*ticket.
 		if ea.caller.DryRun {
 			return ea.createMockEnhanced(t), nil
 		}
-		return nil, fmt.Errorf("AI 預處理失敗: %w", err)
+		return nil, fmt.Errorf(i18n.ErrAgentEnhanceFailed, err)
 	}
 
 	if !result.Success {
-		return nil, fmt.Errorf("AI 預處理失敗: %s", result.Error)
+		return nil, fmt.Errorf(i18n.ErrAgentEnhanceOutput, result.Error)
 	}
 
 	return ea.applyEnhancements(t, jsonData)
@@ -58,49 +62,47 @@ func (ea *EnhanceAgent) Enhance(ctx context.Context, t *ticket.Ticket) (*ticket.
 func (ea *EnhanceAgent) buildPrompt(t *ticket.Ticket) string {
 	var sb strings.Builder
 
-	sb.WriteString("你是一個專案分析專家。請根據以下 ticket 資訊和專案結構，補充更詳細的實作細節。\n\n")
-	sb.WriteString(fmt.Sprintf("專案目錄: %s\n\n", ea.projectDir))
-
-	sb.WriteString("## 原始 Ticket 資訊\n")
-	sb.WriteString(fmt.Sprintf("- ID: %s\n", t.ID))
-	sb.WriteString(fmt.Sprintf("- 標題: %s\n", t.Title))
-	sb.WriteString(fmt.Sprintf("- 類型: %s\n", t.Type))
-	sb.WriteString(fmt.Sprintf("- 優先級: P%d\n", t.Priority))
+	sb.WriteString(i18n.AgentEnhanceIntro)
+	sb.WriteString(fmt.Sprintf(i18n.AgentEnhanceProjectDir, ea.projectDir))
+	sb.WriteString(i18n.AgentEnhanceSection)
+	sb.WriteString(fmt.Sprintf(i18n.AgentEnhanceId, t.ID))
+	sb.WriteString(fmt.Sprintf(i18n.AgentEnhanceTitle, t.Title))
+	sb.WriteString(fmt.Sprintf(i18n.AgentEnhanceType, t.Type))
+	sb.WriteString(fmt.Sprintf(i18n.AgentEnhancePriority, t.Priority))
 	if t.Description != "" {
-		sb.WriteString(fmt.Sprintf("- 描述: %s\n", t.Description))
+		sb.WriteString(fmt.Sprintf(i18n.AgentEnhanceDesc, t.Description))
 	}
 	if len(t.Dependencies) > 0 {
-		sb.WriteString(fmt.Sprintf("- 依賴: %s\n", strings.Join(t.Dependencies, ", ")))
+		sb.WriteString(fmt.Sprintf(i18n.AgentEnhanceDeps, strings.Join(t.Dependencies, ", ")))
 	}
 	if len(t.AcceptanceCriteria) > 0 {
-		sb.WriteString("- 驗收條件:\n")
+		sb.WriteString(i18n.AgentEnhanceCriteria)
 		for _, c := range t.AcceptanceCriteria {
 			sb.WriteString(fmt.Sprintf("  - %s\n", c))
 		}
 	}
 	sb.WriteString("\n")
-
-	sb.WriteString(`## 請分析專案結構並補充以下資訊
-
-請以 JSON 格式輸出分析結果：
-{
-  "description": "補充或改進的詳細描述",
-  "estimated_complexity": "low|medium|high",
-  "acceptance_criteria": ["驗收條件1", "驗收條件2"],
-  "files_to_create": ["可能需要建立的檔案路徑"],
-  "files_to_modify": ["可能需要修改的檔案路徑"],
-  "implementation_hints": ["實作建議1", "實作建議2"]
-}
-
-分析要點:
-1. 根據專案結構推斷需要修改或建立的檔案
-2. 評估實作複雜度 (low/medium/high)
-3. 補充具體可測試的驗收條件
-4. 提供實作建議
-
-請將結果寫入 .tickets/enhance-result.json`)
+	sb.WriteString(i18n.AgentEnhanceJSONBlock)
 
 	return sb.String()
+}
+
+// mergeStringSlices merges new strings into existing, deduplicating by value and skipping empty strings.
+// Existing items come first; new items are appended only if not already present.
+func mergeStringSlices(existing, new []string) []string {
+	seen := make(map[string]bool)
+	for _, s := range existing {
+		seen[s] = true
+	}
+	result := make([]string, len(existing), len(existing)+len(new))
+	copy(result, existing)
+	for _, s := range new {
+		if s != "" && !seen[s] {
+			seen[s] = true
+			result = append(result, s)
+		}
+	}
+	return result
 }
 
 // applyEnhancements applies the AI suggestions to the ticket
@@ -138,42 +140,17 @@ func (ea *EnhanceAgent) applyEnhancements(t *ticket.Ticket, data map[string]inte
 
 	// Apply acceptance criteria
 	if criteria := jsonutil.GetStringSlice(data, "acceptance_criteria"); len(criteria) > 0 {
-		// Merge with existing criteria
-		existing := make(map[string]bool)
-		for _, c := range enhanced.AcceptanceCriteria {
-			existing[c] = true
-		}
-		for _, c := range criteria {
-			if !existing[c] && c != "" {
-				enhanced.AcceptanceCriteria = append(enhanced.AcceptanceCriteria, c)
-			}
-		}
+		enhanced.AcceptanceCriteria = mergeStringSlices(enhanced.AcceptanceCriteria, criteria)
 	}
 
 	// Apply files to create
 	if files := jsonutil.GetStringSlice(data, "files_to_create"); len(files) > 0 {
-		existing := make(map[string]bool)
-		for _, f := range enhanced.FilesToCreate {
-			existing[f] = true
-		}
-		for _, f := range files {
-			if !existing[f] && f != "" {
-				enhanced.FilesToCreate = append(enhanced.FilesToCreate, f)
-			}
-		}
+		enhanced.FilesToCreate = mergeStringSlices(enhanced.FilesToCreate, files)
 	}
 
 	// Apply files to modify
 	if files := jsonutil.GetStringSlice(data, "files_to_modify"); len(files) > 0 {
-		existing := make(map[string]bool)
-		for _, f := range enhanced.FilesToModify {
-			existing[f] = true
-		}
-		for _, f := range files {
-			if !existing[f] && f != "" {
-				enhanced.FilesToModify = append(enhanced.FilesToModify, f)
-			}
-		}
+		enhanced.FilesToModify = mergeStringSlices(enhanced.FilesToModify, files)
 	}
 
 	return enhanced, nil

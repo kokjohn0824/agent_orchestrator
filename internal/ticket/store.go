@@ -9,14 +9,16 @@ import (
 	"sync"
 )
 
-// Store handles ticket persistence
+// Store handles ticket persistence. Tickets are stored as JSON files under baseDir,
+// organized by status (pending, in_progress, completed, failed). A path cache
+// speeds up Load/Save/Delete by avoiding directory scans.
 type Store struct {
 	baseDir   string
 	pathCache map[string]string // ticket ID -> file path cache
 	cacheMu   sync.RWMutex      // protects pathCache
 }
 
-// NewStore creates a new ticket store
+// NewStore creates a Store with the given base directory (e.g. .tickets).
 func NewStore(baseDir string) *Store {
 	return &Store{
 		baseDir:   baseDir,
@@ -24,7 +26,8 @@ func NewStore(baseDir string) *Store {
 	}
 }
 
-// Init initializes the store directories
+// Init creates the status subdirectories under baseDir (pending, in_progress, completed, failed).
+// Call before Save or LoadByStatus. Directory permissions are 0700 to protect sensitive data.
 func (s *Store) Init() error {
 	dirs := []string{
 		filepath.Join(s.baseDir, string(StatusPending)),
@@ -42,7 +45,9 @@ func (s *Store) Init() error {
 	return nil
 }
 
-// Save saves a ticket to the store
+// Save writes a ticket to the store under baseDir/<status>/<id>.json.
+// If the ticket's status changed, the old file in the previous status directory is removed.
+// Validates the ticket before saving. Updates the path cache.
 func (s *Store) Save(t *Ticket) error {
 	if err := t.Validate(); err != nil {
 		return err
@@ -102,7 +107,8 @@ func (s *Store) Save(t *Ticket) error {
 	return nil
 }
 
-// Load loads a ticket by ID
+// Load reads a ticket by ID. Uses the path cache when available; otherwise searches
+// all status directories. Returns an error if the ticket is not found.
 func (s *Store) Load(id string) (*Ticket, error) {
 	// First check cache for known path
 	s.cacheMu.RLock()
@@ -145,7 +151,8 @@ func (s *Store) Load(id string) (*Ticket, error) {
 	return nil, fmt.Errorf("ticket not found: %s", id)
 }
 
-// LoadByStatus loads all tickets with the given status
+// LoadByStatus loads all tickets in the given status directory, sorted by priority.
+// Returns an empty slice if the directory does not exist.
 func (s *Store) LoadByStatus(status Status) ([]*Ticket, error) {
 	dir := filepath.Join(s.baseDir, string(status))
 	if _, err := os.Stat(dir); os.IsNotExist(err) {
@@ -184,7 +191,7 @@ func (s *Store) LoadByStatus(status Status) ([]*Ticket, error) {
 	return tickets, nil
 }
 
-// LoadAll loads all tickets
+// LoadAll loads tickets from all status directories and returns a TicketList.
 func (s *Store) LoadAll() (*TicketList, error) {
 	tl := NewTicketList()
 
@@ -201,7 +208,8 @@ func (s *Store) LoadAll() (*TicketList, error) {
 	return tl, nil
 }
 
-// Delete removes a ticket from the store
+// Delete removes the ticket file for the given ID. Uses the path cache when available.
+// Returns an error if the ticket is not found.
 func (s *Store) Delete(id string) error {
 	// First check cache for known path
 	s.cacheMu.RLock()
@@ -233,22 +241,46 @@ func (s *Store) Delete(id string) error {
 	return fmt.Errorf("ticket not found: %s", id)
 }
 
-// Count returns the count of tickets by status
+// CountByStatus returns the number of tickets with the given status by counting
+// .json files in the status directory. It does not read or parse ticket JSON.
+func (s *Store) CountByStatus(status Status) (int, error) {
+	dir := filepath.Join(s.baseDir, string(status))
+	if _, err := os.Stat(dir); os.IsNotExist(err) {
+		return 0, nil
+	}
+
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return 0, fmt.Errorf("failed to read directory: %w", err)
+	}
+
+	count := 0
+	for _, entry := range entries {
+		if entry.IsDir() || filepath.Ext(entry.Name()) != ".json" {
+			continue
+		}
+		count++
+	}
+	return count, nil
+}
+
+// Count returns the count of tickets per status using ReadDir only (no JSON parsing).
 func (s *Store) Count() (map[Status]int, error) {
 	counts := make(map[Status]int)
 
 	for _, status := range []Status{StatusPending, StatusInProgress, StatusCompleted, StatusFailed} {
-		tickets, err := s.LoadByStatus(status)
+		n, err := s.CountByStatus(status)
 		if err != nil {
 			return nil, err
 		}
-		counts[status] = len(tickets)
+		counts[status] = n
 	}
 
 	return counts, nil
 }
 
-// MoveToStatus moves a ticket to a new status
+// MoveToStatus loads the ticket by ID, sets its status to newStatus, and saves it.
+// The file is moved from the old status directory to the new one.
 func (s *Store) MoveToStatus(id string, newStatus Status) error {
 	ticket, err := s.Load(id)
 	if err != nil {
@@ -259,7 +291,8 @@ func (s *Store) MoveToStatus(id string, newStatus Status) error {
 	return s.Save(ticket)
 }
 
-// MoveFailed moves all failed tickets back to pending
+// MoveFailed loads all failed tickets, sets their status to pending and clears Error/CompletedAt, then saves.
+// Returns the number of tickets moved.
 func (s *Store) MoveFailed() (int, error) {
 	failed, err := s.LoadByStatus(StatusFailed)
 	if err != nil {
@@ -280,12 +313,13 @@ func (s *Store) MoveFailed() (int, error) {
 	return count, nil
 }
 
-// Clean removes all tickets and the base directory
+// Clean removes the base directory and all ticket files.
 func (s *Store) Clean() error {
 	return os.RemoveAll(s.baseDir)
 }
 
-// SaveGeneratedTickets saves tickets from planning output
+// SaveGeneratedTickets writes a ticket list (e.g. from planning) to the given path as JSON.
+// Creates parent directories with 0700 if needed.
 func (s *Store) SaveGeneratedTickets(path string, tickets []*Ticket) error {
 	dir := filepath.Dir(path)
 	// Use 0700 for ticket directories to protect sensitive data
@@ -302,7 +336,7 @@ func (s *Store) SaveGeneratedTickets(path string, tickets []*Ticket) error {
 	return os.WriteFile(path, data, 0644)
 }
 
-// LoadGeneratedTickets loads tickets from planning output
+// LoadGeneratedTickets reads a JSON file at path (e.g. generated-tickets.json) and returns the ticket list.
 func (s *Store) LoadGeneratedTickets(path string) ([]*Ticket, error) {
 	data, err := os.ReadFile(path)
 	if err != nil {

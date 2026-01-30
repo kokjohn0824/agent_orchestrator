@@ -151,6 +151,16 @@ func TestReviewAgent_parseReviewResult(t *testing.T) {
 			output:     "The code is approved and ready to merge",
 			wantStatus: "APPROVED",
 		},
+		{
+			name:       "explicit status line 狀態",
+			output:     "狀態: APPROVED\n摘要: 通過審查",
+			wantStatus: "APPROVED",
+		},
+		{
+			name:       "explicit status line CHANGES_REQUESTED wins over APPROVED in text",
+			output:     "狀態: CHANGES_REQUESTED\nCode is not approved yet.",
+			wantStatus: "CHANGES_REQUESTED",
+		},
 	}
 
 	for _, tt := range tests {
@@ -178,6 +188,86 @@ Issues: None found`
 
 	if result.Summary != "All tests passing and code is clean." {
 		t.Errorf("parseReviewResult() Summary = %v, want 'All tests passing and code is clean.'", result.Summary)
+	}
+}
+
+func TestReviewAgent_parseReviewResult_SummaryAndIssuesSuggestions(t *testing.T) {
+	ra := NewReviewAgent(nil, "/test/project")
+
+	tests := []struct {
+		name            string
+		output          string
+		wantSummary     string
+		wantIssues      []string
+		wantSuggestions []string
+	}{
+		{
+			name: "inline summary 摘要:",
+			output: `狀態: APPROVED
+摘要: 程式碼品質良好，可合併。`,
+			wantSummary: "程式碼品質良好，可合併。",
+		},
+		{
+			name: "issues and suggestions list",
+			output: `狀態: CHANGES_REQUESTED
+摘要: 需要修改
+
+問題:
+- 缺少錯誤處理
+- 變數命名不清晰
+
+建議:
+- 加上 err 檢查
+- 使用更具描述性的名稱`,
+			wantSummary: "需要修改",
+			wantIssues: []string{"缺少錯誤處理", "變數命名不清晰"},
+			wantSuggestions: []string{"加上 err 檢查", "使用更具描述性的名稱"},
+		},
+		{
+			name: "numbered list and English headers",
+			output: `Status: CHANGES_REQUESTED
+Summary: Fix required
+
+Issues:
+1. Missing test
+2. Naming
+
+Suggestions:
+* Add unit test
+* Rename variable`,
+			wantSummary:     "Fix required",
+			wantIssues:      []string{"Missing test", "Naming"},
+			wantSuggestions: []string{"Add unit test", "Rename variable"},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := ra.parseReviewResult(tt.output)
+			if tt.wantSummary != "" && result.Summary != tt.wantSummary {
+				t.Errorf("parseReviewResult() Summary = %q, want %q", result.Summary, tt.wantSummary)
+			}
+			if len(tt.wantIssues) > 0 {
+				if len(result.Issues) != len(tt.wantIssues) {
+					t.Errorf("parseReviewResult() Issues len = %d, want %d", len(result.Issues), len(tt.wantIssues))
+				}
+				for i, w := range tt.wantIssues {
+					if i < len(result.Issues) && result.Issues[i] != w {
+						t.Errorf("parseReviewResult() Issues[%d] = %q, want %q", i, result.Issues[i], w)
+					}
+				}
+			}
+			if len(tt.wantSuggestions) > 0 {
+				if len(result.Suggestions) != len(tt.wantSuggestions) {
+					t.Errorf("parseReviewResult() Suggestions len = %d, want %d", len(result.Suggestions), len(tt.wantSuggestions))
+				}
+				for i, w := range tt.wantSuggestions {
+					if i < len(result.Suggestions) && result.Suggestions[i] != w {
+						t.Errorf("parseReviewResult() Suggestions[%d] = %q, want %q", i, result.Suggestions[i], w)
+					}
+				}
+			}
+		})
 	}
 }
 
@@ -371,6 +461,99 @@ func TestTestAgent_buildTestPrompt(t *testing.T) {
 		if !strings.Contains(prompt, expected) {
 			t.Errorf("buildTestPrompt() should contain %q", expected)
 		}
+	}
+}
+
+func TestTestAgent_parseTestResult(t *testing.T) {
+	ta := NewTestAgent(nil, "/test/project")
+
+	tests := []struct {
+		name        string
+		output      string
+		wantPassed  int
+		wantFailed  int
+		wantSkipped int
+		wantSummary string
+	}{
+		{
+			name:        "empty output",
+			output:      "",
+			wantPassed:  0,
+			wantFailed:  0,
+			wantSkipped: 0,
+			wantSummary: "",
+		},
+		{
+			name: "go test ok/FAIL package lines",
+			output: `ok  	github.com/foo/bar	0.123s
+ok  	github.com/foo/baz	0.056s
+FAIL	github.com/foo/qux	0.200s`,
+			wantPassed:  2,
+			wantFailed:  1,
+			wantSkipped: 0,
+			wantSummary: "2 passed, 1 failed",
+		},
+		{
+			name: "go test --- PASS/--- FAIL lines",
+			output: `--- PASS: TestFoo (0.00s)
+--- PASS: TestBar (0.01s)
+--- FAIL: TestBaz (0.00s)
+--- PASS: TestQux (0.00s)`,
+			wantPassed:  3,
+			wantFailed:  1,
+			wantSkipped: 0,
+			wantSummary: "3 passed, 1 failed",
+		},
+		{
+			name: "pytest passed only",
+			output: `======================== 3 passed in 0.12s ========================`,
+			wantPassed:  3,
+			wantFailed:  0,
+			wantSkipped: 0,
+			wantSummary: "3 passed",
+		},
+		{
+			name: "pytest failed and passed",
+			output: `2 failed, 5 passed in 0.45s`,
+			wantPassed:  5,
+			wantFailed:  2,
+			wantSkipped: 0,
+			wantSummary: "5 passed, 2 failed",
+		},
+		{
+			name: "pytest with skipped",
+			output: `1 failed, 2 passed, 1 skipped in 0.30s`,
+			wantPassed:  2,
+			wantFailed:  1,
+			wantSkipped: 1,
+			wantSummary: "2 passed, 1 failed, 1 skipped",
+		},
+		{
+			name: "pytest with error count",
+			output: `1 error, 2 passed, 1 failed in 0.20s`,
+			wantPassed:  2,
+			wantFailed:  2, // failed + error
+			wantSkipped: 0,
+			wantSummary: "2 passed, 2 failed",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := ta.parseTestResult(tt.output)
+			if result.Passed != tt.wantPassed {
+				t.Errorf("parseTestResult() Passed = %d, want %d", result.Passed, tt.wantPassed)
+			}
+			if result.Failed != tt.wantFailed {
+				t.Errorf("parseTestResult() Failed = %d, want %d", result.Failed, tt.wantFailed)
+			}
+			if result.Skipped != tt.wantSkipped {
+				t.Errorf("parseTestResult() Skipped = %d, want %d", result.Skipped, tt.wantSkipped)
+			}
+			if tt.wantSummary != "" && result.Summary != tt.wantSummary {
+				t.Errorf("parseTestResult() Summary = %q, want %q", result.Summary, tt.wantSummary)
+			}
+		})
 	}
 }
 

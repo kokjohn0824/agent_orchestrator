@@ -4,13 +4,16 @@ import (
 	"fmt"
 )
 
-// ResolverContext holds cached data for dependency resolution operations.
-// Use this to avoid repeated file I/O when processing multiple tickets.
+// ResolverContext holds a cached set of completed ticket IDs for dependency resolution.
+// Create once with NewResolverContext(store), then pass to CanProcessWithContext,
+// GetProcessableWithContext, GetBlockedTicketsWithContext, and GetMissingDependenciesWithContext
+// to avoid repeated LoadByStatus(StatusCompleted) when checking many tickets.
 type ResolverContext struct {
 	completedIDs map[string]bool
 }
 
-// NewResolverContext creates a new resolver context by loading completed tickets.
+// NewResolverContext loads all completed tickets from the store and builds a context
+// mapping their IDs to true. Returns an error if LoadByStatus fails.
 func NewResolverContext(store *Store) (*ResolverContext, error) {
 	completed, err := store.LoadByStatus(StatusCompleted)
 	if err != nil {
@@ -27,25 +30,28 @@ func NewResolverContext(store *Store) (*ResolverContext, error) {
 	}, nil
 }
 
-// IsCompleted checks if a ticket ID is in the completed set.
+// IsCompleted reports whether the given ticket ID is in the completed set.
 func (rc *ResolverContext) IsCompleted(id string) bool {
 	return rc.completedIDs[id]
 }
 
-// DependencyResolver resolves ticket dependencies
+// DependencyResolver answers dependency questions for tickets (can process, processable list,
+// blocked list, missing dependencies, topological sort). It uses the Store to load completed
+// tickets; for batch checks use ResolverContext and the WithContext methods to avoid repeated I/O.
 type DependencyResolver struct {
 	store *Store
 }
 
-// NewDependencyResolver creates a new dependency resolver
+// NewDependencyResolver creates a DependencyResolver that uses the given Store.
 func NewDependencyResolver(store *Store) *DependencyResolver {
 	return &DependencyResolver{
 		store: store,
 	}
 }
 
-// CanProcess checks if a ticket can be processed (all dependencies completed).
-// Note: For processing multiple tickets, use CanProcessWithContext to avoid repeated I/O.
+// CanProcess reports whether the ticket can be processed (all dependencies are completed).
+// It creates a ResolverContext internally; for many tickets use NewResolverContext once
+// and CanProcessWithContext to avoid repeated store access.
 func (dr *DependencyResolver) CanProcess(ticket *Ticket) (bool, error) {
 	ctx, err := NewResolverContext(dr.store)
 	if err != nil {
@@ -54,8 +60,9 @@ func (dr *DependencyResolver) CanProcess(ticket *Ticket) (bool, error) {
 	return dr.CanProcessWithContext(ticket, ctx), nil
 }
 
-// CanProcessWithContext checks if a ticket can be processed using a cached context.
-// This avoids repeated file I/O when checking multiple tickets.
+// CanProcessWithContext reports whether the ticket can be processed using the cached
+// completed set in ctx. Use this when checking many tickets: create ctx once with
+// NewResolverContext(store), then call CanProcessWithContext for each ticket.
 func (dr *DependencyResolver) CanProcessWithContext(ticket *Ticket, ctx *ResolverContext) bool {
 	if len(ticket.Dependencies) == 0 {
 		return true
@@ -70,7 +77,9 @@ func (dr *DependencyResolver) CanProcessWithContext(ticket *Ticket, ctx *Resolve
 	return true
 }
 
-// GetProcessable returns all tickets that can be processed
+// GetProcessable returns all pending tickets whose dependencies are all completed.
+// It builds a ResolverContext internally; for repeated use prefer NewResolverContext
+// and GetProcessableWithContext.
 func (dr *DependencyResolver) GetProcessable() ([]*Ticket, error) {
 	ctx, err := NewResolverContext(dr.store)
 	if err != nil {
@@ -79,7 +88,9 @@ func (dr *DependencyResolver) GetProcessable() ([]*Ticket, error) {
 	return dr.GetProcessableWithContext(ctx)
 }
 
-// GetProcessableWithContext returns all tickets that can be processed using a cached context.
+// GetProcessableWithContext returns all pending tickets that can be processed using
+// the completed set in ctx. Use with the same ctx when you already have it (e.g. after
+// GetBlockedTicketsWithContext) to avoid extra store access.
 func (dr *DependencyResolver) GetProcessableWithContext(ctx *ResolverContext) ([]*Ticket, error) {
 	pending, err := dr.store.LoadByStatus(StatusPending)
 	if err != nil {
@@ -96,7 +107,7 @@ func (dr *DependencyResolver) GetProcessableWithContext(ctx *ResolverContext) ([
 	return processable, nil
 }
 
-// GetBlockedTickets returns all tickets that are blocked by dependencies
+// GetBlockedTickets returns all pending tickets that are blocked (at least one dependency not completed).
 func (dr *DependencyResolver) GetBlockedTickets() ([]*Ticket, error) {
 	ctx, err := NewResolverContext(dr.store)
 	if err != nil {
@@ -105,7 +116,8 @@ func (dr *DependencyResolver) GetBlockedTickets() ([]*Ticket, error) {
 	return dr.GetBlockedTicketsWithContext(ctx)
 }
 
-// GetBlockedTicketsWithContext returns all tickets that are blocked by dependencies using a cached context.
+// GetBlockedTicketsWithContext returns all pending tickets that are blocked, using
+// the completed set in ctx. Use the same ctx for GetProcessableWithContext if needed.
 func (dr *DependencyResolver) GetBlockedTicketsWithContext(ctx *ResolverContext) ([]*Ticket, error) {
 	pending, err := dr.store.LoadByStatus(StatusPending)
 	if err != nil {
@@ -122,8 +134,8 @@ func (dr *DependencyResolver) GetBlockedTicketsWithContext(ctx *ResolverContext)
 	return blocked, nil
 }
 
-// GetMissingDependencies returns the missing dependencies for a ticket.
-// Note: For processing multiple tickets, use GetMissingDependenciesWithContext to avoid repeated I/O.
+// GetMissingDependencies returns the list of dependency IDs that are not yet completed for the ticket.
+// For many tickets, use NewResolverContext once and GetMissingDependenciesWithContext.
 func (dr *DependencyResolver) GetMissingDependencies(ticket *Ticket) ([]string, error) {
 	ctx, err := NewResolverContext(dr.store)
 	if err != nil {
@@ -132,7 +144,8 @@ func (dr *DependencyResolver) GetMissingDependencies(ticket *Ticket) ([]string, 
 	return dr.GetMissingDependenciesWithContext(ticket, ctx), nil
 }
 
-// GetMissingDependenciesWithContext returns the missing dependencies for a ticket using a cached context.
+// GetMissingDependenciesWithContext returns the dependency IDs that are not in the
+// completed set in ctx. Use with the same ResolverContext when batching checks.
 func (dr *DependencyResolver) GetMissingDependenciesWithContext(ticket *Ticket, ctx *ResolverContext) []string {
 	if len(ticket.Dependencies) == 0 {
 		return nil
@@ -148,7 +161,8 @@ func (dr *DependencyResolver) GetMissingDependenciesWithContext(ticket *Ticket, 
 	return missing
 }
 
-// ValidateDependencies validates that all dependencies exist
+// ValidateDependencies checks that every dependency ID referenced by any ticket in tickets
+// is present in the same slice. Returns an error if a ticket references an unknown dependency.
 func (dr *DependencyResolver) ValidateDependencies(tickets []*Ticket) error {
 	ticketIDs := make(map[string]bool)
 	for _, t := range tickets {

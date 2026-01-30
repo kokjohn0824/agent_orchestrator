@@ -41,8 +41,7 @@ func runDrop(cmd *cobra.Command, args []string) error {
 	// Load existing ticket to show info
 	t, err := store.Load(ticketID)
 	if err != nil {
-		ui.PrintError(w, fmt.Sprintf(i18n.ErrTicketNotFound, ticketID))
-		return nil
+		return fmt.Errorf(i18n.ErrTicketNotFound, ticketID)
 	}
 
 	// Show ticket info
@@ -68,8 +67,7 @@ func runDrop(cmd *cobra.Command, args []string) error {
 
 	// Delete the ticket
 	if err := store.Delete(ticketID); err != nil {
-		ui.PrintError(w, fmt.Sprintf("刪除 ticket 失敗: %s", err.Error()))
-		return nil
+		return fmt.Errorf("%s: %w", i18n.ErrDeleteTicketFailed, err)
 	}
 
 	ui.PrintSuccess(w, fmt.Sprintf(i18n.MsgTicketDropped, ticketID))

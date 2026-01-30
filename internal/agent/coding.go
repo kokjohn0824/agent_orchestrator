@@ -8,17 +8,20 @@ import (
 	"strings"
 	"time"
 
+	"github.com/anthropic/agent-orchestrator/internal/i18n"
 	"github.com/anthropic/agent-orchestrator/internal/jsonutil"
 	"github.com/anthropic/agent-orchestrator/internal/ticket"
 )
 
-// CodingAgent implements tickets by writing code
+// CodingAgent implements work tickets by invoking the agent to write or modify code.
+// It builds a prompt from the ticket (ID, title, description, files to create/modify,
+// acceptance criteria) and runs the agent in the project directory with context files.
 type CodingAgent struct {
 	caller     *Caller
 	projectDir string
 }
 
-// NewCodingAgent creates a new coding agent
+// NewCodingAgent creates a CodingAgent that uses the given Caller and project directory.
 func NewCodingAgent(caller *Caller, projectDir string) *CodingAgent {
 	return &CodingAgent{
 		caller:     caller,
@@ -26,7 +29,8 @@ func NewCodingAgent(caller *Caller, projectDir string) *CodingAgent {
 	}
 }
 
-// Execute implements a ticket
+// Execute runs the agent to implement the given ticket. It builds a prompt from the ticket,
+// collects context files from FilesToModify, and returns the agent Result and any error.
 func (ca *CodingAgent) Execute(ctx context.Context, t *ticket.Ticket) (*Result, error) {
 	prompt := ca.buildPrompt(t)
 
@@ -55,18 +59,17 @@ func (ca *CodingAgent) Execute(ctx context.Context, t *ticket.Ticket) (*Result, 
 func (ca *CodingAgent) buildPrompt(t *ticket.Ticket) string {
 	var sb strings.Builder
 
-	sb.WriteString("你是一個專業的開發 Agent。請根據以下 ticket 實作程式碼。\n\n")
-	sb.WriteString(fmt.Sprintf("專案根目錄: %s\n\n", ca.projectDir))
-
-	sb.WriteString("## Ticket 資訊\n")
-	sb.WriteString(fmt.Sprintf("- ID: %s\n", t.ID))
-	sb.WriteString(fmt.Sprintf("- 標題: %s\n", t.Title))
-	sb.WriteString(fmt.Sprintf("- 描述: %s\n", t.Description))
-	sb.WriteString(fmt.Sprintf("- 類型: %s\n", t.Type))
-	sb.WriteString(fmt.Sprintf("- 複雜度: %s\n\n", t.EstimatedComplexity))
+	sb.WriteString(i18n.AgentCodingIntro)
+	sb.WriteString(fmt.Sprintf(i18n.AgentCodingProjectRoot, ca.projectDir))
+	sb.WriteString(i18n.AgentCodingSectionTicket)
+	sb.WriteString(fmt.Sprintf(i18n.AgentCodingTicketId, t.ID))
+	sb.WriteString(fmt.Sprintf(i18n.AgentCodingTicketTitle, t.Title))
+	sb.WriteString(fmt.Sprintf(i18n.AgentCodingTicketDesc, t.Description))
+	sb.WriteString(fmt.Sprintf(i18n.AgentCodingTicketType, t.Type))
+	sb.WriteString(fmt.Sprintf(i18n.AgentCodingTicketComplexity, t.EstimatedComplexity))
 
 	if len(t.FilesToCreate) > 0 {
-		sb.WriteString("## 需要建立的檔案\n")
+		sb.WriteString(i18n.AgentCodingSectionFilesCreate)
 		for _, f := range t.FilesToCreate {
 			sb.WriteString(fmt.Sprintf("- %s\n", f))
 		}
@@ -74,7 +77,7 @@ func (ca *CodingAgent) buildPrompt(t *ticket.Ticket) string {
 	}
 
 	if len(t.FilesToModify) > 0 {
-		sb.WriteString("## 需要修改的檔案\n")
+		sb.WriteString(i18n.AgentCodingSectionFilesModify)
 		for _, f := range t.FilesToModify {
 			sb.WriteString(fmt.Sprintf("- %s\n", f))
 		}
@@ -82,33 +85,26 @@ func (ca *CodingAgent) buildPrompt(t *ticket.Ticket) string {
 	}
 
 	if len(t.AcceptanceCriteria) > 0 {
-		sb.WriteString("## 驗收標準\n")
+		sb.WriteString(i18n.AgentCodingSectionAcceptance)
 		for _, c := range t.AcceptanceCriteria {
 			sb.WriteString(fmt.Sprintf("- %s\n", c))
 		}
 		sb.WriteString("\n")
 	}
 
-	sb.WriteString(`## 請執行以下步驟:
-1. 閱讀相關的現有程式碼 (如果有)
-2. 實作 ticket 所描述的功能
-3. 確保程式碼符合最佳實踐
-4. 新增必要的 import 語句
-5. 確保程式碼可以編譯
-6. 如果適當，新增對應的單元測試
-
-完成後，說明你所做的變更。`)
+	sb.WriteString(i18n.AgentCodingSteps)
 
 	return sb.String()
 }
 
-// AnalyzeAgent analyzes existing code and generates issues
+// AnalyzeAgent analyzes existing project code and generates issues (performance, refactor, security, test, docs).
+// It invokes the agent to produce a JSON report and parses it into ticket.IssueList.
 type AnalyzeAgent struct {
 	caller     *Caller
 	projectDir string
 }
 
-// NewAnalyzeAgent creates a new analyze agent
+// NewAnalyzeAgent creates an AnalyzeAgent that uses the given Caller and project directory.
 func NewAnalyzeAgent(caller *Caller, projectDir string) *AnalyzeAgent {
 	return &AnalyzeAgent{
 		caller:     caller,
@@ -116,7 +112,8 @@ func NewAnalyzeAgent(caller *Caller, projectDir string) *AnalyzeAgent {
 	}
 }
 
-// AnalyzeScope defines what to analyze
+// AnalyzeScope defines which aspects of the codebase to analyze (performance, refactor, security, test, docs).
+// Enable one or more flags to narrow or broaden the analysis.
 type AnalyzeScope struct {
 	Performance bool
 	Refactor    bool
@@ -125,7 +122,7 @@ type AnalyzeScope struct {
 	Docs        bool
 }
 
-// AllScopes returns a scope with all options enabled
+// AllScopes returns an AnalyzeScope with all analysis options enabled.
 func AllScopes() AnalyzeScope {
 	return AnalyzeScope{
 		Performance: true,
@@ -136,7 +133,8 @@ func AllScopes() AnalyzeScope {
 	}
 }
 
-// ParseScopes parses scope strings into AnalyzeScope
+// ParseScopes parses scope strings (e.g. "performance", "perf", "all") into an AnalyzeScope.
+// "all" returns AllScopes(); other values map to Performance, Refactor, Security, Test, Docs.
 func ParseScopes(scopes []string) AnalyzeScope {
 	as := AnalyzeScope{}
 	for _, s := range scopes {
@@ -158,13 +156,14 @@ func ParseScopes(scopes []string) AnalyzeScope {
 	return as
 }
 
-// Analyze analyzes the project and returns issues
+// Analyze runs the agent to analyze the project according to scope and returns an IssueList.
+// Output is written to .tickets/analysis-result.json and parsed into issues. On dry run, returns mock issues.
 func (aa *AnalyzeAgent) Analyze(ctx context.Context, scope AnalyzeScope) (*ticket.IssueList, error) {
 	prompt := aa.buildAnalyzePrompt(scope)
 
 	outputFile := filepath.Join(aa.projectDir, ".tickets", "analysis-result.json")
 	if err := os.MkdirAll(filepath.Dir(outputFile), 0755); err != nil {
-		return nil, fmt.Errorf("無法建立輸出目錄: %w", err)
+		return nil, fmt.Errorf(i18n.ErrAgentMkdirOutput, err)
 	}
 
 	result, jsonData, err := aa.caller.CallForJSON(ctx, prompt, outputFile,
@@ -176,11 +175,11 @@ func (aa *AnalyzeAgent) Analyze(ctx context.Context, scope AnalyzeScope) (*ticke
 		if aa.caller.DryRun {
 			return aa.createMockIssues(scope), nil
 		}
-		return nil, fmt.Errorf("分析失敗: %w", err)
+		return nil, fmt.Errorf(i18n.ErrAgentAnalyzeFailed, err)
 	}
 
 	if !result.Success {
-		return nil, fmt.Errorf("分析失敗: %s", result.Error)
+		return nil, fmt.Errorf(i18n.ErrAgentAnalyzeOutput, result.Error)
 	}
 
 	return aa.parseIssues(jsonData)
@@ -190,43 +189,25 @@ func (aa *AnalyzeAgent) Analyze(ctx context.Context, scope AnalyzeScope) (*ticke
 func (aa *AnalyzeAgent) buildAnalyzePrompt(scope AnalyzeScope) string {
 	var sb strings.Builder
 
-	sb.WriteString("你是一個程式碼分析專家。請分析當前專案的程式碼，找出可改進的地方。\n\n")
-	sb.WriteString(fmt.Sprintf("專案目錄: %s\n\n", aa.projectDir))
-
-	sb.WriteString("請分析以下方面：\n")
+	sb.WriteString(i18n.AgentAnalyzeIntro)
+	sb.WriteString(fmt.Sprintf(i18n.AgentAnalyzeProjectDir, aa.projectDir))
+	sb.WriteString(i18n.AgentAnalyzeAspects)
 	if scope.Performance {
-		sb.WriteString("- **效能問題**: N+1 查詢、不必要的迴圈、記憶體浪費等\n")
+		sb.WriteString(i18n.AgentAnalyzePerf)
 	}
 	if scope.Refactor {
-		sb.WriteString("- **重構建議**: 過長的方法、重複程式碼、缺少抽象等\n")
+		sb.WriteString(i18n.AgentAnalyzeRefactor)
 	}
 	if scope.Security {
-		sb.WriteString("- **安全性問題**: 硬編碼密碼、SQL 注入、XSS 等\n")
+		sb.WriteString(i18n.AgentAnalyzeSecurity)
 	}
 	if scope.Test {
-		sb.WriteString("- **測試覆蓋**: 缺少測試的關鍵功能\n")
+		sb.WriteString(i18n.AgentAnalyzeTest)
 	}
 	if scope.Docs {
-		sb.WriteString("- **文件缺失**: 缺少重要文件或註解\n")
+		sb.WriteString(i18n.AgentAnalyzeDocs)
 	}
-
-	sb.WriteString(`
-請以 JSON 格式輸出分析結果：
-{
-  "issues": [
-    {
-      "id": "ISSUE-001",
-      "category": "performance|refactor|security|test|docs",
-      "severity": "HIGH|MED|LOW",
-      "title": "問題標題",
-      "description": "詳細描述",
-      "location": "檔案路徑:行號",
-      "suggestion": "建議修復方式"
-    }
-  ]
-}
-
-請將結果寫入 .tickets/analysis-result.json`)
+	sb.WriteString(i18n.AgentAnalyzeJSONOutput)
 
 	return sb.String()
 }
@@ -235,7 +216,7 @@ func (aa *AnalyzeAgent) buildAnalyzePrompt(scope AnalyzeScope) string {
 func (aa *AnalyzeAgent) parseIssues(data map[string]interface{}) (*ticket.IssueList, error) {
 	issuesData, ok := data["issues"].([]interface{})
 	if !ok {
-		return nil, fmt.Errorf("無效的 issues 格式")
+		return nil, fmt.Errorf(i18n.ErrAgentInvalidIssues)
 	}
 
 	il := ticket.NewIssueList()

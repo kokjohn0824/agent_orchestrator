@@ -9,18 +9,21 @@ import (
 	"strings"
 	"time"
 
+	"github.com/anthropic/agent-orchestrator/internal/i18n"
 	"github.com/anthropic/agent-orchestrator/internal/jsonutil"
 	"github.com/anthropic/agent-orchestrator/internal/ticket"
 )
 
-// PlanningAgent analyzes milestones and generates tickets
+// PlanningAgent analyzes milestone documents and generates tickets via the agent.
+// It reads a milestone file, asks the agent to produce a JSON ticket list, and writes
+// the result to ticketsDir/generated-tickets.json.
 type PlanningAgent struct {
 	caller     *Caller
 	projectDir string
 	ticketsDir string
 }
 
-// NewPlanningAgent creates a new planning agent
+// NewPlanningAgent creates a PlanningAgent with the given Caller, project directory, and tickets directory.
 func NewPlanningAgent(caller *Caller, projectDir, ticketsDir string) *PlanningAgent {
 	return &PlanningAgent{
 		caller:     caller,
@@ -29,18 +32,19 @@ func NewPlanningAgent(caller *Caller, projectDir, ticketsDir string) *PlanningAg
 	}
 }
 
-// Plan analyzes a milestone file and generates tickets
+// Plan reads the milestone file, invokes the agent to generate tickets, and returns the parsed list.
+// Output is written to ticketsDir/generated-tickets.json. On dry run, returns mock tickets.
 func (pa *PlanningAgent) Plan(ctx context.Context, milestoneFile string) ([]*ticket.Ticket, error) {
 	// Read milestone file
 	content, err := os.ReadFile(milestoneFile)
 	if err != nil {
-		return nil, fmt.Errorf("無法讀取 milestone 檔案: %w", err)
+		return nil, fmt.Errorf(i18n.ErrAgentReadMilestone, err)
 	}
 
 	// Prepare output file
 	outputFile := filepath.Join(pa.ticketsDir, "generated-tickets.json")
 	if err := os.MkdirAll(filepath.Dir(outputFile), 0755); err != nil {
-		return nil, fmt.Errorf("無法建立輸出目錄: %w", err)
+		return nil, fmt.Errorf(i18n.ErrAgentMkdirOutput, err)
 	}
 
 	prompt := pa.buildPlanningPrompt(string(content), milestoneFile, outputFile)
@@ -56,11 +60,11 @@ func (pa *PlanningAgent) Plan(ctx context.Context, milestoneFile string) ([]*tic
 		if pa.caller.DryRun {
 			return pa.createMockTickets(), nil
 		}
-		return nil, fmt.Errorf("規劃失敗: %w", err)
+		return nil, fmt.Errorf(i18n.ErrAgentPlanningFailed, err)
 	}
 
 	if !result.Success {
-		return nil, fmt.Errorf("規劃失敗: %s", result.Error)
+		return nil, fmt.Errorf(i18n.ErrAgentPlanningOutput, result.Error)
 	}
 
 	return pa.parseTickets(jsonData)
@@ -68,37 +72,14 @@ func (pa *PlanningAgent) Plan(ctx context.Context, milestoneFile string) ([]*tic
 
 // buildPlanningPrompt creates the prompt for the planning agent
 func (pa *PlanningAgent) buildPlanningPrompt(content, milestoneFile, outputFile string) string {
-	return fmt.Sprintf(`你是一個專案規劃 Agent。請分析 milestone 文件並產生 tickets。
-
-請讀取檔案 %s 的內容，然後產生 JSON 格式的 tickets 列表。
-
-每個 ticket 包含:
-- id: 唯一識別碼 (格式: TICKET-xxx-描述)
-- title: 簡短標題
-- description: 詳細描述
-- type: 類型 (feature/test/refactor/docs/bugfix/performance/security)
-- priority: 優先級 (1-5, 1最高)
-- estimated_complexity: 複雜度 (low/medium/high)
-- dependencies: 依賴的其他 ticket ID 列表
-- acceptance_criteria: 驗收標準列表
-- files_to_create: 需要建立的檔案
-- files_to_modify: 需要修改的檔案
-
-請確保：
-1. Tickets 之間的依賴關係正確
-2. 每個 ticket 都是獨立可完成的工作單元
-3. 複雜的任務要拆分成多個小 tickets
-4. 按照優先級排序
-
-請將結果以 JSON 格式寫入檔案: %s
-格式為: {"tickets": [...]}`, milestoneFile, outputFile)
+	return fmt.Sprintf(i18n.AgentPlanningPromptTemplate, milestoneFile, outputFile)
 }
 
 // parseTickets parses the JSON output into tickets
 func (pa *PlanningAgent) parseTickets(data map[string]interface{}) ([]*ticket.Ticket, error) {
 	ticketsData, ok := data["tickets"].([]interface{})
 	if !ok {
-		return nil, fmt.Errorf("無效的 tickets 格式")
+		return nil, fmt.Errorf(i18n.ErrAgentInvalidTickets)
 	}
 
 	tickets := make([]*ticket.Ticket, 0)
@@ -208,7 +189,9 @@ func (pa *PlanningAgent) createMockTickets() []*ticket.Ticket {
 	}
 }
 
-// ProjectSummary contains analyzed information about an existing project
+// ProjectSummary holds analyzed information about an existing project (language, framework,
+// structure, main files, tests/docs presence, and a short description). Used by InitAgent
+// for interactive project initialization.
 type ProjectSummary struct {
 	Language    string   // Primary programming language
 	Framework   string   // Framework if detected
@@ -219,7 +202,7 @@ type ProjectSummary struct {
 	Description string   // AI-generated project description
 }
 
-// String returns a formatted string representation of the summary
+// String returns a formatted string representation of the summary (language, framework, structure, etc.).
 func (ps *ProjectSummary) String() string {
 	var sb strings.Builder
 	if ps.Language != "" {
@@ -240,14 +223,16 @@ func (ps *ProjectSummary) String() string {
 	return sb.String()
 }
 
-// InitAgent handles interactive project initialization
+// InitAgent handles interactive project initialization: scanning the project, generating
+// questions, and producing milestone documents. It uses the agent to analyze the codebase
+// and to generate Q&A and milestone content.
 type InitAgent struct {
 	caller     *Caller
 	projectDir string
 	docsDir    string
 }
 
-// NewInitAgent creates a new init agent
+// NewInitAgent creates an InitAgent with the given Caller, project directory, and docs directory.
 func NewInitAgent(caller *Caller, projectDir, docsDir string) *InitAgent {
 	return &InitAgent{
 		caller:     caller,
@@ -256,30 +241,10 @@ func NewInitAgent(caller *Caller, projectDir, docsDir string) *InitAgent {
 	}
 }
 
-// ScanProject analyzes the existing project and returns a summary
+// ScanProject invokes the agent to analyze the project and returns a ProjectSummary.
+// On dry run or parse error, returns a mock summary.
 func (ia *InitAgent) ScanProject(ctx context.Context) (*ProjectSummary, error) {
-	prompt := fmt.Sprintf(`你是一個專案分析專家。請分析當前目錄的專案結構。
-
-專案目錄: %s
-
-請掃描專案並回答：
-1. 主要使用的程式語言
-2. 使用的框架或工具（如果有）
-3. 專案結構（主要資料夾）
-4. 是否有測試檔案
-5. 是否有文件（README, docs/）
-6. 簡短描述這個專案的功能
-
-請以 JSON 格式輸出：
-{
-  "language": "主要語言",
-  "framework": "框架名稱（沒有則空字串）",
-  "structure": "主要資料夾，如 cmd/, internal/, pkg/",
-  "main_files": ["重要檔案1", "重要檔案2"],
-  "has_tests": true/false,
-  "has_docs": true/false,
-  "description": "專案功能簡述"
-}`, ia.projectDir)
+	prompt := fmt.Sprintf(i18n.AgentInitScanIntro, ia.projectDir)
 
 	result, err := ia.caller.Call(ctx, prompt,
 		WithWorkingDir(ia.projectDir),
@@ -290,7 +255,7 @@ func (ia *InitAgent) ScanProject(ctx context.Context) (*ProjectSummary, error) {
 		if ia.caller.DryRun {
 			return ia.createMockSummary(), nil
 		}
-		return nil, fmt.Errorf("掃描專案失敗: %w", err)
+		return nil, fmt.Errorf(i18n.ErrAgentScanFailed, err)
 	}
 
 	summary, err := ia.parseSummary(result.Output)
@@ -349,35 +314,15 @@ func (ia *InitAgent) createMockSummary() *ProjectSummary {
 	}
 }
 
-// GenerateQuestions generates questions based on the initial goal and project summary
+// GenerateQuestions uses the agent to generate 5–7 questions based on the goal and optional
+// project summary. For an existing project, questions focus on integration and compatibility;
+// for a new project, on tech stack and requirements.
 func (ia *InitAgent) GenerateQuestions(ctx context.Context, goal string, summary *ProjectSummary) ([]string, error) {
 	var prompt string
 
 	if summary != nil {
 		// Existing project - generate targeted questions
-		prompt = fmt.Sprintf(`你是一個專案規劃助手。使用者想要在現有專案上進行以下開發：
-
-## 開發目標
-"%s"
-
-## 現有專案資訊
-- 語言: %s
-- 框架: %s
-- 結構: %s
-- 專案描述: %s
-- 已有測試: %v
-- 已有文件: %v
-
-請產生 5-7 個針對性問題，幫助我了解更多細節以便產生完整的 milestone。
-因為這是現有專案，問題應該聚焦在：
-1. 新功能如何與現有架構整合
-2. 是否需要修改現有模組
-3. 與現有功能的互動方式
-4. 相容性考量
-5. 測試策略
-6. 部署/遷移考量
-
-請以 JSON 格式輸出：{"questions": ["問題1", "問題2", ...]}`,
+		prompt = fmt.Sprintf(i18n.AgentInitQuestionsExisting,
 			goal,
 			summary.Language,
 			summary.Framework,
@@ -388,20 +333,7 @@ func (ia *InitAgent) GenerateQuestions(ctx context.Context, goal string, summary
 		)
 	} else {
 		// New project - generate general questions
-		prompt = fmt.Sprintf(`你是一個專案規劃助手。使用者想要建立以下專案：
-
-"%s"
-
-請產生 5-7 個關鍵問題，幫助我了解更多細節以便產生完整的 milestone。
-問題應該涵蓋：
-1. 技術選型（程式語言、框架等）
-2. 目標使用者
-3. 關鍵功能需求
-4. 效能/規模需求
-5. 部署環境
-6. 整合需求
-
-請以 JSON 格式輸出：{"questions": ["問題1", "問題2", ...]}`, goal)
+		prompt = fmt.Sprintf(i18n.AgentInitQuestionsNew, goal)
 	}
 
 	result, err := ia.caller.Call(ctx, prompt, WithTimeout(2*time.Minute))
@@ -465,7 +397,8 @@ func (ia *InitAgent) defaultQuestionsExisting() []string {
 	}
 }
 
-// GenerateMilestone generates a milestone document based on goal and answers
+// GenerateMilestone invokes the agent to produce a milestone Markdown file from the goal,
+// Q&A (questions and answers), and optional project summary. Returns the path to the written file.
 func (ia *InitAgent) GenerateMilestone(ctx context.Context, goal string, questions []string, answers []string, summary *ProjectSummary) (string, error) {
 	// Build Q&A section
 	var qaSection strings.Builder
@@ -481,41 +414,14 @@ func (ia *InitAgent) GenerateMilestone(ctx context.Context, goal string, questio
 	outputPath := filepath.Join(ia.docsDir, filename)
 
 	if err := os.MkdirAll(ia.docsDir, 0755); err != nil {
-		return "", fmt.Errorf("無法建立文件目錄: %w", err)
+		return "", fmt.Errorf(i18n.ErrAgentMkdirDocs, err)
 	}
 
 	var prompt string
 
 	if summary != nil {
 		// Existing project - generate enhancement milestone
-		prompt = fmt.Sprintf(`你是一個專案規劃專家。請根據以下資訊產生詳細的 milestone 文件。
-
-## 開發目標
-%s
-
-## 現有專案資訊
-- 語言: %s
-- 框架: %s
-- 專案結構: %s
-- 專案描述: %s
-- 已有測試: %v
-- 已有文件: %v
-
-## 需求細節
-%s
-
-請產生一個 Markdown 格式的 milestone 文件，包含：
-1. 開發目標概述
-2. 現有架構分析（與新功能的關聯）
-3. 功能需求清單
-4. 實作階段規劃（分成多個 phase）
-   - 考慮與現有程式碼的整合順序
-   - 標註需要修改的現有模組
-5. 每個階段的具體任務
-6. 測試計畫（包含整合測試）
-7. 驗收標準
-
-請將結果寫入檔案: %s`,
+		prompt = fmt.Sprintf(i18n.AgentInitMilestoneExisting,
 			goal,
 			summary.Language,
 			summary.Framework,
@@ -528,23 +434,7 @@ func (ia *InitAgent) GenerateMilestone(ctx context.Context, goal string, questio
 		)
 	} else {
 		// New project - generate standard milestone
-		prompt = fmt.Sprintf(`你是一個專案規劃專家。請根據以下資訊產生詳細的 milestone 文件。
-
-## 專案目標
-%s
-
-## 需求細節
-%s
-
-請產生一個 Markdown 格式的 milestone 文件，包含：
-1. 專案概述
-2. 技術架構
-3. 功能需求清單
-4. 實作階段規劃（分成多個 phase）
-5. 每個階段的具體任務
-6. 驗收標準
-
-請將結果寫入檔案: %s`, goal, qaSection.String(), outputPath)
+		prompt = fmt.Sprintf(i18n.AgentInitMilestoneNew, goal, qaSection.String(), outputPath)
 	}
 
 	result, err := ia.caller.Call(ctx, prompt,
@@ -557,14 +447,14 @@ func (ia *InitAgent) GenerateMilestone(ctx context.Context, goal string, questio
 	}
 
 	if !result.Success {
-		return "", fmt.Errorf("產生 milestone 失敗: %s", result.Error)
+		return "", fmt.Errorf(i18n.ErrAgentCreateMilestone, result.Error)
 	}
 
 	// Check if file was created
 	if _, err := os.Stat(outputPath); os.IsNotExist(err) {
 		// Try to extract content from output and write it
 		if err := os.WriteFile(outputPath, []byte(result.Output), 0644); err != nil {
-			return "", fmt.Errorf("無法寫入 milestone 檔案: %w", err)
+			return "", fmt.Errorf(i18n.ErrAgentWriteMilestone, err)
 		}
 	}
 

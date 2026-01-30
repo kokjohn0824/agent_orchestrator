@@ -9,6 +9,36 @@ import (
 	"github.com/anthropic/agent-orchestrator/internal/config"
 )
 
+func TestGetGitChangedFiles_InvalidProjectRoot(t *testing.T) {
+	ctx := context.Background()
+
+	originalCfg := cfg
+	if cfg == nil {
+		cfg = config.DefaultConfig()
+	}
+	defer func() { cfg = originalCfg }()
+
+	// Empty project root should cause validateProjectRoot to fail
+	cfg.ProjectRoot = ""
+	result := getGitChangedFiles(ctx)
+	if result != nil {
+		t.Errorf("getGitChangedFiles() with empty ProjectRoot = %v, want nil", result)
+	}
+
+	// Non-git directory should also cause validateProjectRoot to fail
+	tempDir, err := os.MkdirTemp("", "test-non-git-*")
+	if err != nil {
+		t.Fatalf("failed to create temp dir: %v", err)
+	}
+	defer os.RemoveAll(tempDir)
+
+	cfg.ProjectRoot = tempDir
+	result = getGitChangedFiles(ctx)
+	if result != nil {
+		t.Errorf("getGitChangedFiles() with non-git ProjectRoot = %v, want nil", result)
+	}
+}
+
 func TestGetGitChangedFiles_ContextCancellation(t *testing.T) {
 	// Create a cancelled context
 	ctx, cancel := context.WithCancel(context.Background())

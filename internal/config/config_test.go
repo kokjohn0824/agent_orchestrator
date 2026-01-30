@@ -99,6 +99,62 @@ func TestDefaultConfig(t *testing.T) {
 	}
 }
 
+func TestConfig_Save_CreatesParentDirectory(t *testing.T) {
+	tempDir, err := os.MkdirTemp("", "config-save-test-*")
+	if err != nil {
+		t.Fatalf("failed to create temp dir: %v", err)
+	}
+	defer os.RemoveAll(tempDir)
+
+	// Path with nested directories (like .config/agent-orchestrator/config.yaml)
+	configPath := filepath.Join(tempDir, "nested", "config", "config.yaml")
+
+	cfg := DefaultConfig()
+	cfg.ProjectRoot = tempDir
+	cfg.TicketsDir = filepath.Join(tempDir, ".tickets")
+	cfg.LogsDir = filepath.Join(tempDir, ".agent-logs")
+	cfg.DocsDir = filepath.Join(tempDir, "docs")
+
+	if err := cfg.Save(configPath); err != nil {
+		t.Fatalf("Save() error = %v", err)
+	}
+
+	// Verify file was written
+	if _, err := os.Stat(configPath); os.IsNotExist(err) {
+		t.Fatalf("config file was not created at %s", configPath)
+	}
+
+	// Verify parent directory was created with 0700
+	configDir := filepath.Dir(configPath)
+	info, err := os.Stat(configDir)
+	if err != nil {
+		t.Fatalf("failed to stat config directory: %v", err)
+	}
+	perm := info.Mode().Perm()
+	if perm&0077 != 0 {
+		t.Errorf("config directory has permissions %o, expected 0700 (no group/other access)", perm)
+	}
+}
+
+func TestConfig_Save_ExistingDirectory(t *testing.T) {
+	tempDir, err := os.MkdirTemp("", "config-save-existing-*")
+	if err != nil {
+		t.Fatalf("failed to create temp dir: %v", err)
+	}
+	defer os.RemoveAll(tempDir)
+
+	configPath := filepath.Join(tempDir, "config.yaml")
+	cfg := DefaultConfig()
+
+	if err := cfg.Save(configPath); err != nil {
+		t.Fatalf("Save() error = %v", err)
+	}
+
+	if _, err := os.Stat(configPath); os.IsNotExist(err) {
+		t.Fatalf("config file was not created at %s", configPath)
+	}
+}
+
 func TestConfig_Validate(t *testing.T) {
 	tests := []struct {
 		name    string

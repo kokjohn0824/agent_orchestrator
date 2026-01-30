@@ -341,6 +341,7 @@ const (
 	ErrAgentCommand         = "找不到 agent 指令"
 	ErrMilestoneNotFound    = "Milestone 檔案不存在: %s"
 	ErrTicketNotFound       = "找不到 ticket: %s"
+	ErrDeleteTicketFailed   = "刪除 ticket 失敗"
 	ErrLoadConfigFailed     = "載入設定失敗: %s"
 	ErrInitStoreFailed      = "初始化 ticket store 失敗: %w"
 	ErrSaveTicketFailed     = "儲存 ticket 失敗: %s"
@@ -398,6 +399,149 @@ const (
 	StepTesting    = "Testing - 執行測試..."
 	StepReview     = "Review - 程式碼審查..."
 	StepCommitting = "Committing - 提交變更..."
+)
+
+// Agent prompts and messages (caller, coding, planning, enhance)
+const (
+	// Caller
+	AgentContextFilesLabel = "相關檔案: %s"
+	AgentWriteJSONToFile    = "請將結果以 JSON 格式寫入檔案: %s"
+	AgentDryRunSkipCall     = "[DRY RUN] 跳過實際 agent 呼叫"
+	AgentModelInUse         = "使用模型: %s"
+	AgentWriteFile          = "寫入檔案: %s"
+	AgentReadFile           = "讀取檔案: %s"
+	AgentDurationMs = "完成，耗時 %.0fms"
+
+	// Coding agent prompt
+	AgentCodingIntro           = "你是一個專業的開發 Agent。請根據以下 ticket 實作程式碼。\n\n"
+	AgentCodingProjectRoot     = "專案根目錄: %s\n\n"
+	AgentCodingSectionTicket   = "## Ticket 資訊\n"
+	AgentCodingTicketId        = "- ID: %s\n"
+	AgentCodingTicketTitle     = "- 標題: %s\n"
+	AgentCodingTicketDesc      = "- 描述: %s\n"
+	AgentCodingTicketType      = "- 類型: %s\n"
+	AgentCodingTicketComplexity = "- 複雜度: %s\n\n"
+	AgentCodingSectionFilesCreate = "## 需要建立的檔案\n"
+	AgentCodingSectionFilesModify = "## 需要修改的檔案\n"
+	AgentCodingSectionAcceptance  = "## 驗收標準\n"
+	AgentCodingSteps = `## 請執行以下步驟:
+1. 閱讀相關的現有程式碼 (如果有)
+2. 實作 ticket 所描述的功能
+3. 確保程式碼符合最佳實踐
+4. 新增必要的 import 語句
+5. 確保程式碼可以編譯
+6. 如果適當，新增對應的單元測試
+
+完成後，說明你所做的變更。`
+
+	// Analyze agent prompt
+	AgentAnalyzeIntro       = "你是一個程式碼分析專家。請分析當前專案的程式碼，找出可改進的地方。\n\n"
+	AgentAnalyzeProjectDir  = "專案目錄: %s\n\n"
+	AgentAnalyzeAspects     = "請分析以下方面：\n"
+	AgentAnalyzePerf        = "- **效能問題**: N+1 查詢、不必要的迴圈、記憶體浪費等\n"
+	AgentAnalyzeRefactor    = "- **重構建議**: 過長的方法、重複程式碼、缺少抽象等\n"
+	AgentAnalyzeSecurity    = "- **安全性問題**: 硬編碼密碼、SQL 注入、XSS 等\n"
+	AgentAnalyzeTest        = "- **測試覆蓋**: 缺少測試的關鍵功能\n"
+	AgentAnalyzeDocs        = "- **文件缺失**: 缺少重要文件或註解\n"
+	AgentAnalyzeJSONOutput  = `
+請以 JSON 格式輸出分析結果：
+{
+  "issues": [
+    {
+      "id": "ISSUE-001",
+      "category": "performance|refactor|security|test|docs",
+      "severity": "HIGH|MED|LOW",
+      "title": "問題標題",
+      "description": "詳細描述",
+      "location": "檔案路徑:行號",
+      "suggestion": "建議修復方式"
+    }
+  ]
+}
+
+請將結果寫入 .tickets/analysis-result.json`
+
+	// Planning agent prompt
+	AgentPlanningPromptTemplate = `你是一個專案規劃 Agent。請分析 milestone 文件並產生 tickets。
+
+請讀取檔案 %s 的內容，然後產生 JSON 格式的 tickets 列表。
+
+每個 ticket 包含:
+- id: 唯一識別碼 (格式: TICKET-xxx-描述)
+- title: 簡短標題
+- description: 詳細描述
+- type: 類型 (feature/test/refactor/docs/bugfix/performance/security)
+- priority: 優先級 (1-5, 1最高)
+- estimated_complexity: 複雜度 (low/medium/high)
+- dependencies: 依賴的其他 ticket ID 列表
+- acceptance_criteria: 驗收標準列表
+- files_to_create: 需要建立的檔案
+- files_to_modify: 需要修改的檔案
+
+請確保：
+1. Tickets 之間的依賴關係正確
+2. 每個 ticket 都是獨立可完成的工作單元
+3. 複雜的任務要拆分成多個小 tickets
+4. 按照優先級排序
+
+請將結果以 JSON 格式寫入檔案: %s
+格式為: {"tickets": [...]}`
+
+	// Enhance agent prompt
+	AgentEnhanceIntro     = "你是一個專案分析專家。請根據以下 ticket 資訊和專案結構，補充更詳細的實作細節。\n\n"
+	AgentEnhanceProjectDir = "專案目錄: %s\n\n"
+	AgentEnhanceSection    = "## 原始 Ticket 資訊\n"
+	AgentEnhanceId         = "- ID: %s\n"
+	AgentEnhanceTitle      = "- 標題: %s\n"
+	AgentEnhanceType       = "- 類型: %s\n"
+	AgentEnhancePriority   = "- 優先級: P%d\n"
+	AgentEnhanceDesc       = "- 描述: %s\n"
+	AgentEnhanceDeps       = "- 依賴: %s\n"
+	AgentEnhanceCriteria   = "- 驗收條件:\n"
+	AgentEnhanceJSONBlock  = `## 請分析專案結構並補充以下資訊
+
+請以 JSON 格式輸出分析結果：
+{
+  "description": "補充或改進的詳細描述",
+  "estimated_complexity": "low|medium|high",
+  "acceptance_criteria": ["驗收條件1", "驗收條件2"],
+  "files_to_create": ["可能需要建立的檔案路徑"],
+  "files_to_modify": ["可能需要修改的檔案路徑"],
+  "implementation_hints": ["實作建議1", "實作建議2"]
+}
+
+分析要點:
+1. 根據專案結構推斷需要修改或建立的檔案
+2. 評估實作複雜度 (low/medium/high)
+3. 補充具體可測試的驗收條件
+4. 提供實作建議
+
+請將結果寫入 .tickets/enhance-result.json`
+
+	// Init/Planning agent prompts (planning.go init-related)
+	AgentInitScanIntro     = "你是一個專案分析專家。請分析當前目錄的專案結構。\n\n專案目錄: %s\n\n請掃描專案並回答：\n1. 主要使用的程式語言\n2. 使用的框架或工具（如果有）\n3. 專案結構（主要資料夾）\n4. 是否有測試檔案\n5. 是否有文件（README, docs/）\n6. 簡短描述這個專案的功能\n\n請以 JSON 格式輸出：\n{\n  \"language\": \"主要語言\",\n  \"framework\": \"框架名稱（沒有則空字串）\",\n  \"structure\": \"主要資料夾，如 cmd/, internal/, pkg/\",\n  \"main_files\": [\"重要檔案1\", \"重要檔案2\"],\n  \"has_tests\": true/false,\n  \"has_docs\": true/false,\n  \"description\": \"專案功能簡述\"\n}"
+	AgentInitQuestionsExisting = "你是一個專案規劃助手。使用者想要在現有專案上進行以下開發：\n\n## 開發目標\n\"%s\"\n\n## 現有專案資訊\n- 語言: %s\n- 框架: %s\n- 結構: %s\n- 專案描述: %s\n- 已有測試: %v\n- 已有文件: %v\n\n請產生 5-7 個針對性問題，幫助我了解更多細節以便產生完整的 milestone。\n因為這是現有專案，問題應該聚焦在：\n1. 新功能如何與現有架構整合\n2. 是否需要修改現有模組\n3. 與現有功能的互動方式\n4. 相容性考量\n5. 測試策略\n6. 部署/遷移考量\n\n請以 JSON 格式輸出：{\"questions\": [\"問題1\", \"問題2\", ...]}"
+	AgentInitQuestionsNew   = "你是一個專案規劃助手。使用者想要建立以下專案：\n\n\"%s\"\n\n請產生 5-7 個關鍵問題，幫助我了解更多細節以便產生完整的 milestone。\n問題應該涵蓋：\n1. 技術選型（程式語言、框架等）\n2. 目標使用者\n3. 關鍵功能需求\n4. 效能/規模需求\n5. 部署環境\n6. 整合需求\n\n請以 JSON 格式輸出：{\"questions\": [\"問題1\", \"問題2\", ...]}"
+	AgentInitMilestoneExisting = "你是一個專案規劃專家。請根據以下資訊產生詳細的 milestone 文件。\n\n## 開發目標\n%s\n\n## 現有專案資訊\n- 語言: %s\n- 框架: %s\n- 專案結構: %s\n- 專案描述: %s\n- 已有測試: %v\n- 已有文件: %v\n\n## 需求細節\n%s\n\n請產生一個 Markdown 格式的 milestone 文件，包含：\n1. 開發目標概述\n2. 現有架構分析（與新功能的關聯）\n3. 功能需求清單\n4. 實作階段規劃（分成多個 phase）\n   - 考慮與現有程式碼的整合順序\n   - 標註需要修改的現有模組\n5. 每個階段的具體任務\n6. 測試計畫（包含整合測試）\n7. 驗收標準\n\n請將結果寫入檔案: %s"
+	AgentInitMilestoneNew   = "你是一個專案規劃專家。請根據以下資訊產生詳細的 milestone 文件。\n\n## 專案目標\n%s\n\n## 需求細節\n%s\n\n請產生一個 Markdown 格式的 milestone 文件，包含：\n1. 專案概述\n2. 技術架構\n3. 功能需求清單\n4. 實作階段規劃（分成多個 phase）\n5. 每個階段的具體任務\n6. 驗收標準\n\n請將結果寫入檔案: %s"
+)
+
+// Agent error messages (coding, planning, enhance, init)
+const (
+	ErrAgentMkdirOutput   = "無法建立輸出目錄: %w"
+	ErrAgentMkdirDocs     = "無法建立文件目錄: %w"
+	ErrAgentAnalyzeFailed = "分析失敗: %w"
+	ErrAgentAnalyzeOutput = "分析失敗: %s"
+	ErrAgentInvalidIssues = "無效的 issues 格式"
+	ErrAgentReadMilestone = "無法讀取 milestone 檔案: %w"
+	ErrAgentPlanningFailed = "規劃失敗: %w"
+	ErrAgentPlanningOutput = "規劃失敗: %s"
+	ErrAgentInvalidTickets = "無效的 tickets 格式"
+	ErrAgentEnhanceFailed  = "AI 預處理失敗: %w"
+	ErrAgentEnhanceOutput  = "AI 預處理失敗: %s"
+	ErrAgentScanFailed     = "掃描專案失敗: %w"
+	ErrAgentWriteMilestone = "無法寫入 milestone 檔案: %w"
+	ErrAgentCreateMilestone = "產生 milestone 失敗: %s"
 )
 
 // Error messages for the errors package

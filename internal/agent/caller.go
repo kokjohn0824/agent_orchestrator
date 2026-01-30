@@ -1,4 +1,5 @@
-// Package agent provides Cursor Agent integration
+// Package agent provides Cursor Agent integration for invoking the Cursor CLI
+// agent, executing tickets, planning, code review, and related workflows.
 package agent
 
 import (
@@ -15,10 +16,13 @@ import (
 	"sync"
 	"time"
 
+	"github.com/anthropic/agent-orchestrator/internal/i18n"
 	"github.com/anthropic/agent-orchestrator/internal/ui"
 )
 
-// Result represents the result of an agent call
+// Result represents the result of an agent call.
+// It holds success status, stdout/stderr output, duration, exit code,
+// and optionally stream events and log file path when detailed logging is enabled.
 type Result struct {
 	Success      bool
 	Output       string
@@ -29,7 +33,8 @@ type Result struct {
 	LogPath      string // Path to log file when detailed logging is enabled
 }
 
-// StreamEvent represents a streaming event from the agent
+// StreamEvent represents a single streaming event from the agent (e.g. system init, tool_call).
+// Type and Subtype identify the event; Data holds parsed JSON fields; Raw is the original line.
 type StreamEvent struct {
 	Type    string                 `json:"type"`
 	Subtype string                 `json:"subtype,omitempty"`
@@ -37,7 +42,8 @@ type StreamEvent struct {
 	Raw     string                 `json:"-"`
 }
 
-// CallOption configures an agent call
+// CallOption configures a single agent call (context files, working dir, timeout, stream handler).
+// Pass one or more CallOption to Call or CallForJSON to customize the invocation.
 type CallOption func(*callOptions)
 
 type callOptions struct {
@@ -47,35 +53,41 @@ type callOptions struct {
 	onStream     func(StreamEvent)
 }
 
-// WithContextFiles adds context files to the agent call
+// WithContextFiles adds context file paths to the agent call so the agent can read them.
+// These paths are appended to the prompt as "相關檔案: ...".
 func WithContextFiles(files ...string) CallOption {
 	return func(o *callOptions) {
 		o.contextFiles = append(o.contextFiles, files...)
 	}
 }
 
-// WithWorkingDir sets the working directory for the agent call
+// WithWorkingDir sets the working directory for the agent call (cmd.Dir).
+// Use the project root when the agent should run from a specific path.
 func WithWorkingDir(dir string) CallOption {
 	return func(o *callOptions) {
 		o.workingDir = dir
 	}
 }
 
-// WithTimeout sets the timeout for the agent call
+// WithTimeout sets the timeout for the agent call. The context is derived with this duration.
+// Default is 10 minutes if not set.
 func WithTimeout(d time.Duration) CallOption {
 	return func(o *callOptions) {
 		o.timeout = d
 	}
 }
 
-// WithStreamHandler sets a callback for stream events
+// WithStreamHandler sets a callback invoked for each stream event when output format is stream-json.
+// Use it to react to tool calls or progress events in real time.
 func WithStreamHandler(fn func(StreamEvent)) CallOption {
 	return func(o *callOptions) {
 		o.onStream = fn
 	}
 }
 
-// Caller handles Cursor Agent CLI invocations
+// Caller handles Cursor Agent CLI invocations. It builds and runs the agent command
+// with configurable working dir, context files, timeout, and logging. Use Call
+// for normal prompts and CallForJSON when the agent should write JSON to a file.
 type Caller struct {
 	Command            string
 	Force              bool
@@ -87,7 +99,8 @@ type Caller struct {
 	writer             io.Writer
 }
 
-// NewCaller creates a new agent caller
+// NewCaller creates a new Caller with the given command name, force flag, output format, and log directory.
+// Command is typically the Cursor agent CLI binary name (e.g. "cursor" or full path).
 func NewCaller(command string, force bool, outputFormat string, logDir string) *Caller {
 	return &Caller{
 		Command:      command,
@@ -98,28 +111,31 @@ func NewCaller(command string, force bool, outputFormat string, logDir string) *
 	}
 }
 
-// SetWriter sets the output writer
+// SetWriter sets the writer used for verbose and dry-run output. Default is os.Stdout.
 func (c *Caller) SetWriter(w io.Writer) {
 	c.writer = w
 }
 
-// SetDryRun enables/disables dry run mode
+// SetDryRun enables or disables dry run mode. When true, Call does not execute the agent;
+// it returns a success result with "[DRY RUN] Agent call skipped".
 func (c *Caller) SetDryRun(dryRun bool) {
 	c.DryRun = dryRun
 }
 
-// SetVerbose enables/disables verbose output
+// SetVerbose enables or disables verbose output (e.g. model name, tool calls, duration).
 func (c *Caller) SetVerbose(verbose bool) {
 	c.Verbose = verbose
 }
 
-// IsAvailable checks if the agent command is available
+// IsAvailable reports whether the agent command is found on PATH.
 func (c *Caller) IsAvailable() bool {
 	_, err := exec.LookPath(c.Command)
 	return err == nil
 }
 
-// Call invokes the Cursor Agent with the given prompt
+// Call invokes the Cursor Agent with the given prompt and options.
+// It returns the result (output, success, duration, stream events) and any execution error.
+// Use WithContextFiles, WithWorkingDir, WithTimeout, WithStreamHandler to configure the call.
 func (c *Caller) Call(ctx context.Context, prompt string, opts ...CallOption) (*Result, error) {
 	options := &callOptions{
 		timeout: 10 * time.Minute,
@@ -194,7 +210,7 @@ func (c *Caller) buildArgs(prompt string, opts *callOptions) []string {
 	// Build full prompt with context files
 	fullPrompt := prompt
 	if len(opts.contextFiles) > 0 {
-		fullPrompt = fmt.Sprintf("%s\n\n相關檔案: %s", prompt, strings.Join(opts.contextFiles, " "))
+		fullPrompt = fmt.Sprintf("%s\n\n"+i18n.AgentContextFilesLabel, prompt, strings.Join(opts.contextFiles, " "))
 	}
 
 	args = append(args, fullPrompt)
@@ -251,8 +267,12 @@ func (c *Caller) executeStream(ctx context.Context, cmd *exec.Cmd, logFile *os.F
 
 	var outputBuilder strings.Builder
 
-	// Process stdout
+	// Process stdout with larger buffer to support long lines (default max token ~64KB)
 	scanner := bufio.NewScanner(stdout)
+	const maxScanTokenSize = 1024 * 1024 // 1MB
+	buf := make([]byte, 0, 64*1024)
+	scanner.Buffer(buf, maxScanTokenSize)
+
 	for scanner.Scan() {
 		line := scanner.Text()
 		outputBuilder.WriteString(line + "\n")
@@ -271,6 +291,18 @@ func (c *Caller) executeStream(ctx context.Context, cmd *exec.Cmd, logFile *os.F
 			}
 			c.handleStreamEvent(*event)
 		}
+	}
+
+	if err := scanner.Err(); err != nil {
+		// Still read stderr and wait for process before returning
+		stderrBytes, _ := io.ReadAll(stderr)
+		if len(stderrBytes) > 0 {
+			result.Error = string(stderrBytes)
+			outputBuilder.WriteString(string(stderrBytes))
+		}
+		_ = cmd.Wait()
+		result.Output = outputBuilder.String()
+		return result, fmt.Errorf("stdout scan: %w", err)
 	}
 
 	// Read stderr
@@ -328,7 +360,7 @@ func (c *Caller) handleStreamEvent(event StreamEvent) {
 	case "system":
 		if event.Subtype == "init" {
 			if model, ok := event.Data["model"].(string); ok && c.Verbose {
-				ui.PrintInfo(c.writer, fmt.Sprintf("使用模型: %s", model))
+				ui.PrintInfo(c.writer, fmt.Sprintf(i18n.AgentModelInUse, model))
 			}
 		}
 	case "tool_call":
@@ -339,7 +371,7 @@ func (c *Caller) handleStreamEvent(event StreamEvent) {
 		}
 	case "result":
 		if duration, ok := event.Data["duration_ms"].(float64); ok && c.Verbose {
-			ui.PrintSuccess(c.writer, fmt.Sprintf("完成，耗時 %.0fms", duration))
+			ui.PrintSuccess(c.writer, fmt.Sprintf(i18n.AgentDurationMs, duration))
 		}
 	}
 }
@@ -353,13 +385,13 @@ func (c *Caller) logToolCall(toolCall map[string]interface{}) {
 	if writeCall, ok := toolCall["writeToolCall"].(map[string]interface{}); ok {
 		if args, ok := writeCall["args"].(map[string]interface{}); ok {
 			if path, ok := args["path"].(string); ok {
-				ui.PrintInfo(c.writer, fmt.Sprintf("寫入檔案: %s", path))
+				ui.PrintInfo(c.writer, fmt.Sprintf(i18n.AgentWriteFile, path))
 			}
 		}
 	} else if readCall, ok := toolCall["readToolCall"].(map[string]interface{}); ok {
 		if args, ok := readCall["args"].(map[string]interface{}); ok {
 			if path, ok := args["path"].(string); ok {
-				ui.PrintInfo(c.writer, fmt.Sprintf("讀取檔案: %s", path))
+				ui.PrintInfo(c.writer, fmt.Sprintf(i18n.AgentReadFile, path))
 			}
 		}
 	}
@@ -474,7 +506,7 @@ func (c *Caller) logResult(file *os.File, result *Result, err error) {
 
 // logDryRun logs a dry run
 func (c *Caller) logDryRun(prompt string, opts *callOptions) {
-	ui.PrintWarning(c.writer, "[DRY RUN] 跳過實際 agent 呼叫")
+	ui.PrintWarning(c.writer, i18n.AgentDryRunSkipCall)
 	if c.Verbose {
 		ui.PrintInfo(c.writer, fmt.Sprintf("Prompt: %s", ui.Truncate(prompt, 200)))
 		if len(opts.contextFiles) > 0 {
@@ -483,10 +515,12 @@ func (c *Caller) logDryRun(prompt string, opts *callOptions) {
 	}
 }
 
-// CallForJSON calls the agent and expects JSON output to a file
+// CallForJSON invokes the agent with a prompt that asks for JSON output to be written to outputFile,
+// then reads and parses that file. Returns the Call result, the parsed JSON as map[string]interface{},
+// and an error if the call failed, the file could not be read, or JSON parsing failed.
 func (c *Caller) CallForJSON(ctx context.Context, prompt string, outputFile string, opts ...CallOption) (*Result, map[string]interface{}, error) {
 	// Add instruction to write JSON to file
-	fullPrompt := fmt.Sprintf("%s\n\n請將結果以 JSON 格式寫入檔案: %s", prompt, outputFile)
+	fullPrompt := fmt.Sprintf("%s\n\n"+i18n.AgentWriteJSONToFile, prompt, outputFile)
 
 	result, err := c.Call(ctx, fullPrompt, opts...)
 	if err != nil {

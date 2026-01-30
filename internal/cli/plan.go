@@ -6,6 +6,7 @@ import (
 	"os"
 
 	"github.com/anthropic/agent-orchestrator/internal/agent"
+	orcherrors "github.com/anthropic/agent-orchestrator/internal/errors"
 	"github.com/anthropic/agent-orchestrator/internal/i18n"
 	"github.com/anthropic/agent-orchestrator/internal/ticket"
 	"github.com/anthropic/agent-orchestrator/internal/ui"
@@ -29,8 +30,7 @@ func runPlanWithFile(ctx context.Context, milestoneFile string) error {
 
 	// Check if milestone file exists
 	if _, err := os.Stat(milestoneFile); os.IsNotExist(err) {
-		ui.PrintError(w, fmt.Sprintf(i18n.ErrMilestoneNotFound, milestoneFile))
-		return nil
+		return orcherrors.ErrFileNotFound(milestoneFile)
 	}
 
 	ui.PrintHeader(w, i18n.UIPlanning)
@@ -39,8 +39,7 @@ func runPlanWithFile(ctx context.Context, milestoneFile string) error {
 	// Create agent caller
 	caller, err := CreateAgentCaller()
 	if err != nil {
-		ui.PrintError(w, i18n.ErrAgentNotFound)
-		return nil
+		return err
 	}
 
 	planningAgent := agent.NewPlanningAgent(caller, cfg.ProjectRoot, cfg.TicketsDir)

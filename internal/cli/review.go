@@ -4,8 +4,6 @@ import (
 	"context"
 	"fmt"
 	"os"
-	"os/exec"
-	"strings"
 
 	"github.com/anthropic/agent-orchestrator/internal/agent"
 	"github.com/anthropic/agent-orchestrator/internal/i18n"
@@ -88,40 +86,4 @@ func runReview(cmd *cobra.Command, args []string) error {
 	}
 
 	return nil
-}
-
-func getGitChangedFiles(ctx context.Context) []string {
-	// Try git diff --name-only HEAD
-	cmd := exec.CommandContext(ctx, "git", "diff", "--name-only", "HEAD")
-	cmd.Dir = cfg.ProjectRoot
-	output, err := cmd.Output()
-	if err != nil {
-		// Check if context was cancelled
-		if ctx.Err() != nil {
-			return nil
-		}
-		// Try git status --porcelain
-		cmd = exec.CommandContext(ctx, "git", "status", "--porcelain")
-		cmd.Dir = cfg.ProjectRoot
-		output, err = cmd.Output()
-		if err != nil {
-			return nil
-		}
-	}
-
-	lines := strings.Split(strings.TrimSpace(string(output)), "\n")
-	files := make([]string, 0)
-	for _, line := range lines {
-		line = strings.TrimSpace(line)
-		if line == "" {
-			continue
-		}
-		// Handle git status --porcelain format (e.g., "M  file.go")
-		if len(line) > 3 && line[2] == ' ' {
-			line = strings.TrimSpace(line[3:])
-		}
-		files = append(files, line)
-	}
-
-	return files
 }

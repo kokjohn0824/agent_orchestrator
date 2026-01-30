@@ -3,17 +3,22 @@ package agent
 import (
 	"context"
 	"fmt"
+	"regexp"
+	"strconv"
 	"strings"
 	"time"
+	"unicode/utf8"
 )
 
-// ReviewAgent handles code review
+// ReviewAgent invokes the agent to perform code review on given files.
+// It builds a prompt listing the files and asks for status (APPROVED/CHANGES_REQUESTED),
+// summary, issues, and suggestions.
 type ReviewAgent struct {
 	caller     *Caller
 	projectDir string
 }
 
-// NewReviewAgent creates a new review agent
+// NewReviewAgent creates a ReviewAgent with the given Caller and project directory.
 func NewReviewAgent(caller *Caller, projectDir string) *ReviewAgent {
 	return &ReviewAgent{
 		caller:     caller,
@@ -21,15 +26,17 @@ func NewReviewAgent(caller *Caller, projectDir string) *ReviewAgent {
 	}
 }
 
-// ReviewResult contains the review outcome
+// ReviewResult holds the parsed outcome of a code review: status (APPROVED or CHANGES_REQUESTED),
+// summary, list of issues, and list of suggestions.
 type ReviewResult struct {
-	Status   string   // APPROVED or CHANGES_REQUESTED
-	Summary  string
-	Issues   []string
+	Status      string   // APPROVED or CHANGES_REQUESTED
+	Summary     string
+	Issues      []string
 	Suggestions []string
 }
 
-// Review reviews the given files
+// Review runs the agent to review the given file paths and returns the raw Result,
+// parsed ReviewResult, and any error.
 func (ra *ReviewAgent) Review(ctx context.Context, files []string) (*Result, *ReviewResult, error) {
 	if len(files) == 0 {
 		return &Result{Success: true, Output: "No files to review"}, nil, nil
@@ -82,7 +89,16 @@ func (ra *ReviewAgent) buildReviewPrompt(files []string) string {
 	return sb.String()
 }
 
-// parseReviewResult extracts review result from output
+// statusPattern matches "狀態: APPROVED" or "Status: CHANGES_REQUESTED" (with optional colon variants)
+var statusPattern = regexp.MustCompile(`(?i)(?:狀態|Status)\s*[：:]\s*(APPROVED|CHANGES_REQUESTED)`)
+
+// summaryInlinePattern matches "摘要: xxx" or "Summary: xxx" on same line
+var summaryInlinePattern = regexp.MustCompile(`(?i)(?:摘要|Summary)\s*[：:]\s*(.+)`)
+
+// parseReviewResult extracts review result from output with robust parsing.
+// It prefers explicit "狀態: APPROVED/CHANGES_REQUESTED", then falls back to keyword presence.
+// Summary can be on same line ("摘要: ...") or on the next line after "摘要"/"Summary".
+// Issues and Suggestions are parsed from list sections after "問題"/"Issues" and "建議"/"Suggestions".
 func (ra *ReviewAgent) parseReviewResult(output string) *ReviewResult {
 	result := &ReviewResult{
 		Status:      "UNKNOWN",
@@ -90,34 +106,119 @@ func (ra *ReviewAgent) parseReviewResult(output string) *ReviewResult {
 		Suggestions: make([]string, 0),
 	}
 
-	// Simple parsing - look for APPROVED or CHANGES_REQUESTED
-	if strings.Contains(strings.ToUpper(output), "APPROVED") {
-		result.Status = "APPROVED"
-	} else if strings.Contains(strings.ToUpper(output), "CHANGES_REQUESTED") {
-		result.Status = "CHANGES_REQUESTED"
+	// 1. Status: prefer explicit "狀態: X" / "Status: X"
+	if m := statusPattern.FindStringSubmatch(output); len(m) >= 2 {
+		result.Status = strings.ToUpper(m[1])
+	} else {
+		// Fallback: keyword presence (check CHANGES_REQUESTED first to avoid matching inside it)
+		upper := strings.ToUpper(output)
+		if strings.Contains(upper, "CHANGES_REQUESTED") {
+			result.Status = "CHANGES_REQUESTED"
+		} else if strings.Contains(upper, "APPROVED") {
+			result.Status = "APPROVED"
+		}
 	}
 
-	// Extract summary (first paragraph after "摘要" or "Summary")
+	// 2. Summary: inline "摘要: xxx" first, then "摘要" or "Summary" next line
+	if m := summaryInlinePattern.FindStringSubmatch(output); len(m) >= 2 {
+		result.Summary = strings.TrimSpace(m[1])
+	}
 	lines := strings.Split(output, "\n")
 	for i, line := range lines {
-		lower := strings.ToLower(line)
-		if strings.Contains(lower, "摘要") || strings.Contains(lower, "summary") {
+		trimmed := strings.TrimSpace(line)
+		lower := strings.ToLower(trimmed)
+		// Header-only line (摘要 or Summary without content on same line)
+		if (lower == "摘要" || lower == "summary") && result.Summary == "" {
 			if i+1 < len(lines) {
 				result.Summary = strings.TrimSpace(lines[i+1])
+			}
+			break
+		}
+		if (strings.HasPrefix(lower, "摘要") || strings.HasPrefix(lower, "summary")) && result.Summary == "" {
+			// "摘要: xxx" already handled by regex; here handle "摘要 xxx" without colon
+			idx := strings.IndexRune(line, ':')
+			if idx == -1 {
+				idx = strings.IndexRune(line, '：')
+			}
+			if idx >= 0 {
+				result.Summary = strings.TrimSpace(line[idx+1:])
 			}
 		}
 	}
 
+	// 3. Issues: lines after "問題" or "Issues" until next section or empty block
+	result.Issues = parseListSection(output, []string{"問題", "issues"}, []string{"建議", "suggestions", "summary", "摘要"})
+
+	// 4. Suggestions: lines after "建議" or "Suggestions"
+	result.Suggestions = parseListSection(output, []string{"建議", "suggestions"}, []string{"問題", "issues", "狀態", "status"})
+
 	return result
 }
 
-// TestAgent handles test execution
+// parseListSection extracts list items (lines starting with -, *, or digits.) from a section
+// that starts with one of startMarkers and ends before any of endMarkers (section headers).
+func parseListSection(output string, startMarkers, endMarkers []string) []string {
+	lines := strings.Split(output, "\n")
+	var inSection bool
+	var list []string
+	listLinePattern := regexp.MustCompile(`^\s*[-*•]\s+(.+)$`)
+	numberedPattern := regexp.MustCompile(`^\s*\d+[.)]\s+(.+)$`)
+
+	for _, line := range lines {
+		trimmed := strings.TrimSpace(line)
+		lower := strings.ToLower(trimmed)
+		if lower == "" {
+			continue
+		}
+		for _, m := range startMarkers {
+			if strings.HasPrefix(lower, m) || lower == m {
+				inSection = true
+				// Inline content after "問題: item1" (use trimmed so offset is correct)
+				rest := strings.TrimSpace(trimmed[len(m):])
+				if rest != "" {
+					rest = strings.TrimPrefix(rest, ":")
+					rest = strings.TrimPrefix(rest, "：")
+					rest = strings.TrimSpace(rest)
+					if rest != "" {
+						list = append(list, rest)
+					}
+				}
+				break
+			}
+		}
+		if !inSection {
+			continue
+		}
+		for _, e := range endMarkers {
+			if !strings.HasPrefix(lower, e) {
+				continue
+			}
+			if len(lower) == len(e) {
+				return list
+			}
+			rest := lower[len(e):]
+			r, _ := utf8.DecodeRuneInString(rest)
+			if r == ' ' || r == ':' || r == '\uFF1A' { // \uFF1A = fullwidth colon '：'
+				return list
+			}
+		}
+		if sub := listLinePattern.FindStringSubmatch(line); len(sub) >= 2 {
+			list = append(list, strings.TrimSpace(sub[1]))
+		} else if sub := numberedPattern.FindStringSubmatch(line); len(sub) >= 2 {
+			list = append(list, strings.TrimSpace(sub[1]))
+		}
+	}
+	return list
+}
+
+// TestAgent invokes the agent to run tests in the project (e.g. go test, pytest).
+// It parses the agent output to extract pass/fail/skip counts and a summary.
 type TestAgent struct {
 	caller     *Caller
 	projectDir string
 }
 
-// NewTestAgent creates a new test agent
+// NewTestAgent creates a TestAgent with the given Caller and project directory.
 func NewTestAgent(caller *Caller, projectDir string) *TestAgent {
 	return &TestAgent{
 		caller:     caller,
@@ -125,7 +226,7 @@ func NewTestAgent(caller *Caller, projectDir string) *TestAgent {
 	}
 }
 
-// TestResult contains the test outcome
+// TestResult holds the parsed test outcome: passed/failed/skipped counts and a summary string.
 type TestResult struct {
 	Passed  int
 	Failed  int
@@ -133,7 +234,8 @@ type TestResult struct {
 	Summary string
 }
 
-// RunTests executes tests in the project
+// RunTests runs the agent to execute tests in the project and returns the raw Result,
+// parsed TestResult (go test or pytest format), and any error.
 func (ta *TestAgent) RunTests(ctx context.Context) (*Result, *TestResult, error) {
 	prompt := ta.buildTestPrompt()
 
@@ -175,23 +277,105 @@ func (ta *TestAgent) buildTestPrompt() string {
 - 修復建議`, ta.projectDir)
 }
 
-// parseTestResult extracts test result from output
+// goTestOkPattern matches "ok  \tpath/to/pkg\t0.123s" or "ok  path 0.12s"
+var goTestOkPattern = regexp.MustCompile(`(?m)^ok\s+(\S+)\s+([\d.]+s)`)
+
+// goTestFailPattern matches "FAIL\tpath/to/pkg\t0.123s"
+var goTestFailPattern = regexp.MustCompile(`(?m)^FAIL\s+(\S+)\s+([\d.]+s)`)
+
+// goTestPassFailPattern matches "--- PASS: TestName (0.00s)" or "--- FAIL: TestName (0.00s)"
+var goTestPassFailPattern = regexp.MustCompile(`(?m)^--- (PASS|FAIL): (\S+) \(([\d.]+s)\)`)
+
+// pytestResultPattern matches "3 passed in 0.12s", "2 failed, 1 passed", "1 failed, 2 passed, 1 skipped in 0.30s"
+var pytestPassedPattern = regexp.MustCompile(`(\d+)\s+passed`)
+var pytestFailedPattern = regexp.MustCompile(`(\d+)\s+failed`)
+var pytestSkippedPattern = regexp.MustCompile(`(\d+)\s+skipped`)
+var pytestErrorPattern = regexp.MustCompile(`(\d+)\s+error`)
+
+// parseTestResult extracts test result from output.
+// It supports common formats: go test (ok/FAIL lines and --- PASS/--- FAIL), pytest (X passed, Y failed).
 func (ta *TestAgent) parseTestResult(output string) *TestResult {
 	result := &TestResult{}
-	
-	// Try to extract numbers from common test output formats
-	// This is a simple implementation - in production you'd want more robust parsing
-	
+
+	// Try go test format first: --- PASS / --- FAIL lines (most precise)
+	passCount := 0
+	failCount := 0
+	for _, m := range goTestPassFailPattern.FindAllStringSubmatch(output, -1) {
+		if len(m) >= 2 {
+			switch m[1] {
+			case "PASS":
+				passCount++
+			case "FAIL":
+				failCount++
+			}
+		}
+	}
+	if passCount > 0 || failCount > 0 {
+		result.Passed = passCount
+		result.Failed = failCount
+		result.Summary = summarizeTestResult(result.Passed, result.Failed, result.Skipped)
+		return result
+	}
+
+	// Go test: ok / FAIL package lines (aggregate)
+	okMatches := goTestOkPattern.FindAllStringSubmatch(output, -1)
+	failMatches := goTestFailPattern.FindAllStringSubmatch(output, -1)
+	if len(okMatches) > 0 || len(failMatches) > 0 {
+		// Count packages: each "ok" is at least one passed package; each "FAIL" is one failed package
+		result.Passed = len(okMatches)
+		result.Failed = len(failMatches)
+		result.Summary = summarizeTestResult(result.Passed, result.Failed, result.Skipped)
+		return result
+	}
+
+	// Pytest format: "X passed", "Y failed", "Z skipped"
+	if m := pytestPassedPattern.FindStringSubmatch(output); len(m) >= 2 {
+		result.Passed, _ = strconv.Atoi(m[1])
+	}
+	if m := pytestFailedPattern.FindStringSubmatch(output); len(m) >= 2 {
+		result.Failed, _ = strconv.Atoi(m[1])
+	}
+	if m := pytestSkippedPattern.FindStringSubmatch(output); len(m) >= 2 {
+		result.Skipped, _ = strconv.Atoi(m[1])
+	}
+	if m := pytestErrorPattern.FindStringSubmatch(output); len(m) >= 2 {
+		n, _ := strconv.Atoi(m[1])
+		result.Failed += n
+	}
+	if result.Passed > 0 || result.Failed > 0 || result.Skipped > 0 {
+		result.Summary = summarizeTestResult(result.Passed, result.Failed, result.Skipped)
+		return result
+	}
+
+	result.Summary = summarizeTestResult(result.Passed, result.Failed, result.Skipped)
 	return result
 }
 
-// CommitAgent handles git commits
+func summarizeTestResult(passed, failed, skipped int) string {
+	if passed == 0 && failed == 0 && skipped == 0 {
+		return ""
+	}
+	var parts []string
+	if passed > 0 {
+		parts = append(parts, fmt.Sprintf("%d passed", passed))
+	}
+	if failed > 0 {
+		parts = append(parts, fmt.Sprintf("%d failed", failed))
+	}
+	if skipped > 0 {
+		parts = append(parts, fmt.Sprintf("%d skipped", skipped))
+	}
+	return strings.Join(parts, ", ")
+}
+
+// CommitAgent invokes the agent to create a git commit for a ticket (git add + commit with
+// Conventional Commits style message). It uses the ticket ID, title, and change description.
 type CommitAgent struct {
 	caller     *Caller
 	projectDir string
 }
 
-// NewCommitAgent creates a new commit agent
+// NewCommitAgent creates a CommitAgent with the given Caller and project directory.
 func NewCommitAgent(caller *Caller, projectDir string) *CommitAgent {
 	return &CommitAgent{
 		caller:     caller,
@@ -199,7 +383,8 @@ func NewCommitAgent(caller *Caller, projectDir string) *CommitAgent {
 	}
 }
 
-// Commit creates a commit for a ticket
+// Commit runs the agent to stage and commit changes with a message referencing the ticket.
+// Returns the agent Result and any error.
 func (ca *CommitAgent) Commit(ctx context.Context, ticketID, ticketTitle, changes string) (*Result, error) {
 	prompt := ca.buildCommitPrompt(ticketID, ticketTitle, changes)
 

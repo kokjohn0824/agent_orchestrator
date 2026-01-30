@@ -147,6 +147,23 @@ export AGENT_OUTPUT_FORMAT=stream-json    # 輸出格式
 export AGENT_FORCE=true                   # Force 模式
 ```
 
+### 設定說明
+
+以下為設定檔各欄位的預設值與建議情境；程式內預設以 `DefaultConfig()` 為準，設定檔與環境變數會覆寫對應欄位。
+
+| 欄位 | 預設值 | 說明與建議情境 |
+|------|--------|----------------|
+| **agent_command** | `agent` | 呼叫 Cursor Agent 的 CLI 指令名稱或路徑。**何時調整**：Cursor CLI 安裝在非 PATH 或使用自訂執行檔時，改為完整路徑或別名。 |
+| **agent_output_format** | `text` | 輸出格式：`text`、`json`、`stream-json`。**何時調整**：需要程式化解析輸出時用 `json` 或 `stream-json`；一般使用 `text` 即可。 |
+| **agent_force** | `true` | 是否在呼叫 agent 時加上 `--force`，允許寫入/修改檔案。**何時調整**：僅想預覽不寫入時設為 `false`；多數情境建議保持 `true`。 |
+| **agent_timeout** | `600` | 單次 agent 呼叫的超時秒數（10 分鐘）。**何時調整**：任務較大或環境較慢時可提高；想提早中止卡住任務時可降低。 |
+| **tickets_dir** | `.tickets` | Tickets 儲存目錄（可為相對路徑，相對於專案根目錄）。 | 
+| **logs_dir** | `.agent-logs` | Agent 執行日誌目錄；日誌可能含 prompt 與輸出內容。 |
+| **docs_dir** | `docs` | 文件（如 milestone）輸出目錄。 |
+| **max_parallel** | `3` | `work` 指令同時執行的 agent 數量上限。**何時調整**：機器資源足夠且想加快處理時可提高；資源有限或避免過載時可降低。 |
+| **disable_detailed_log** | `false` | 設為 `true` 時**停用詳細日誌**：不會在 `logs_dir` 寫入含 prompt 與 agent 輸出的日誌檔。**副作用**：無法從日誌還原對話內容。**何時調整**：在含機密或專屬程式碼的環境、或需符合資安/合規要求時，建議設為 `true`。 |
+| **analyze_scopes** | `["all"]` | `analyze` 指令的預設分析範圍；可選 `performance`、`refactor`、`security`、`test`、`docs`、`all`。指令列 `--scope` 會覆寫此預設。**何時調整**：若經常只分析部分面向（例如僅 performance、security），可在此設定以省去每次下 `--scope`。 |
+
 ## Tickets 生命週期
 
 ```

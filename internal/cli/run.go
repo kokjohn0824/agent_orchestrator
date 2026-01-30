@@ -219,7 +219,7 @@ func runPipeline(cmd *cobra.Command, args []string) error {
 		files := getGitChangedFiles(ctx)
 		if len(files) > 0 {
 			reviewAgent := agent.NewReviewAgent(caller, cfg.ProjectRoot)
-			reviewResult, _, err := reviewAgent.Review(ctx, files)
+			result, reviewResult, err := reviewAgent.Review(ctx, files)
 			if err != nil {
 				// Review failure is recoverable - log and continue
 				recErr := orcherrors.ErrReview(err)
@@ -227,7 +227,9 @@ func runPipeline(cmd *cobra.Command, args []string) error {
 				results["review"] = map[string]bool{"success": false}
 			} else {
 				ui.PrintSuccess(w, "  "+i18n.MsgReviewComplete)
-				results["review"] = map[string]bool{"success": reviewResult.Success}
+				results["review"] = map[string]bool{"success": result.Success}
+				// 若需區分審查通過/需修改，可依 reviewResult.Status 使用
+				_ = reviewResult
 			}
 		} else {
 			ui.PrintInfo(w, "  "+i18n.MsgNoFilesToReview)
@@ -242,17 +244,15 @@ func runPipeline(cmd *cobra.Command, args []string) error {
 
 		completedTickets, _ := store.LoadByStatus(ticket.StatusCompleted)
 		commitAgent := agent.NewCommitAgent(caller, cfg.ProjectRoot)
-		
+
+		changes := getGitStatus(ctx)
 		commitCount := 0
-		for _, t := range completedTickets {
-			changes := getGitStatus(ctx)
-			if changes == "" {
-				continue
-			}
-			
-			result, err := commitAgent.Commit(ctx, t.ID, t.Title, changes)
-			if err == nil && result.Success {
-				commitCount++
+		if changes != "" {
+			for _, t := range completedTickets {
+				result, err := commitAgent.Commit(ctx, t.ID, t.Title, changes)
+				if err == nil && result.Success {
+					commitCount++
+				}
 			}
 		}
 
